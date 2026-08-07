@@ -9,6 +9,27 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+/**
+ * TODO
+ * - Implement Store
+ * - Prepare all statements beforehand
+ * - Read about prepared statements in transactions
+ * - Enable write ahead logging
+ * - Think about assembly versioning and implement it
+ * - Implement recursive read of BoM tree
+ * - Implement migration system
+ * - Implement connection pool
+ * - Add better errors
+ * - think about having timestamps in more things
+ * - Test stuff
+ * - Think about ensuring all statement call will take the right ammount of arguments
+ * - Study and think about context and timeouts
+ * - Add more fields to image table (mime_type, width, height, etc)
+ * - Add optional image input to item creation functions
+ * - Think about how to implement a tracker scanner goroutine
+ * - Implement manufacture orders
+ * - Think about manufacture orders having another state maybe called refurbished or something that restores inventory
+ */
 func main() {
 	// NOTE: the _foreign_keys MUST STAY ON else new assemblies might cause recursions
 	db, err := sql.Open("sqlite3", "file:database.db?_foreign_keys=on")
