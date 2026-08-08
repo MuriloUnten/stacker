@@ -88,24 +88,24 @@ func main() {
 		log.Fatal(err)
 	}
 
-	componentParams := CreateComponentParams{
-		name: "Parafuso Allen M3 10mm",
-		available: 100,
-	}
-
-	component, err := createComponent(db, componentParams)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("component 1: %#v\n", component)
-
-	componentParams.name = "Porca 1"
-	componentParams.available = 3
-	component, err = createComponent(db, componentParams)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("component 2: %#v\n", component)
+	// componentParams := CreateComponentParams{
+	// 	name: "Parafuso Allen M3 10mm",
+	// 	available: 100,
+	// }
+	//
+	// component, err := createComponent(db, componentParams)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// fmt.Printf("component 1: %#v\n", component)
+	//
+	// componentParams.name = "Porca 1"
+	// componentParams.available = 3
+	// component, err = createComponent(db, componentParams)
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// fmt.Printf("component 2: %#v\n", component)
 
 	comps, err := getComponents(db)
 	if err != nil {
@@ -117,6 +117,17 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Printf("%#v\n", c)
+
+	items, err := getItems(db)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(items)
+	item, err := getItemById(db, 1)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%#v\n", item)
 }
 
 type ItemKind string
@@ -128,7 +139,7 @@ const (
 	ASSEMBLY  ItemKind = "assembly"
 )
 
-type BaseItem struct {
+type Item struct {
 	id      int
 	name    string
 	kind    ItemKind
@@ -138,30 +149,10 @@ type BaseItem struct {
 	reserved  int
 }
 
-type Item struct {
-	BaseItem
-	children []BoMLine
-}
-
 type BoMLine struct {
 	assemblyItemId int
 	childItemId    int
 	ammount        int
-}
-
-type Component struct {
-	BaseItem
-}
-
-func (c Component) toItem() Item {
-	var item Item
-	item.BaseItem = c.BaseItem
-	item.children = nil
-	return item
-}
-
-type Assembly struct {
-	Item
 }
 
 type CreateComponentParams struct {
@@ -187,6 +178,11 @@ type CreateAssemblyParams struct {
 	children  []CreateItemChildParams
 }
 
+type CreateAssemblyResult struct {
+	Item
+	children []BoMLine
+}
+
 /**
  * Params for the creation of the base item shared between Assembly and Component
  * (which is basically the Component itself)
@@ -197,6 +193,20 @@ type CreateGenericItemParams struct {
 	available int
 }
 
+type AssemblyNode struct {
+	Item
+	ammount int
+	children []AssemblyNode
+}
+
+/**
+ * allows for scan from both *sql.Row and *sql.Rows
+ * always assumes all fields, and in the order they are defined
+ */
+type RowScanner interface {
+	Scan(...any) error
+}
+
 /**
  * When item is a component, children must be empty or nil
  * All children must already exist
@@ -204,7 +214,8 @@ type CreateGenericItemParams struct {
  */
 func createItem(db *sql.DB, params CreateItemParams) (Item, error) {
 	var item Item
-	if params.kind == COMPONENT {
+	switch params.kind {
+	case COMPONENT:
 		if len(params.children) != 0 {
 			return item, errors.New("children must be nil or empty when creating a component")
 		}
@@ -213,46 +224,47 @@ func createItem(db *sql.DB, params CreateItemParams) (Item, error) {
 			available: params.available,
 		}
 		component, err := createComponent(db, componentParams) 
-		return component.toItem(), err
+		return component, err
+	case ASSEMBLY:
+		assemblyParams := CreateAssemblyParams{
+			name: params.name,
+			available: params.available,
+			children: params.children,
+		}
+		assembly, err := createAssembly(db, assemblyParams)
+		return assembly.Item, err
+	default:
+		return item, errors.New("invalid kind")
 	}
-
-	assemblyParams := CreateAssemblyParams{
-		name: params.name,
-		available: params.available,
-		children: params.children,
-	}
-	assembly, err := createAssembly(db, assemblyParams)
-	return assembly.Item, err
 }
 
-func createComponent(db *sql.DB, params CreateComponentParams) (Component, error) {
-	created := Component{}
-
-	tx, err := db.Begin()
+func getItems(db *sql.DB) ([]Item, error) {
+	q := `
+	select it.item_id, it.name, it.kind, it.image_id, inv.available, inv.reserved
+	from item it join inventory inv on it.item_id = inv.item_id
+	`
+	rows, err := db.Query(q)
 	if err != nil {
-		return created, err
-	}
-	defer tx.Rollback()
-
-	itemParams := CreateGenericItemParams{
-		name: params.name,
-		kind: ASSEMBLY,
-		available: params.available,
-	}
-	created.BaseItem, err = insertBaseItem(tx, itemParams)
-	if err != nil {
-		return created, err
+		return nil, err
 	}
 
-	if err = tx.Commit(); err != nil {
-		return created, err
-	}
-
-	return created, err
+	items := make([]Item, 0, 10)
+	return scanItems(rows, items)
 }
 
-func getComponents(db *sql.DB) ([]Component, error) {
-	kind := COMPONENT
+func getItemById(db *sql.DB, id int) (Item, error) {
+	q := `
+	select it.item_id, it.name, it.kind, it.image_id, inv.available, inv.reserved
+	from item it join inventory inv on it.item_id = inv.item_id
+	where it.item_id = ?`
+
+	row := db.QueryRow(q, id)
+	var item Item
+	err := scanItem(row, &item)
+	return item, err
+}
+
+func getItemsWithKind(db *sql.DB, kind ItemKind) ([]Item, error) {
 	q := `
 	select it.item_id, it.name, it.kind, it.image_id, inv.available, inv.reserved
 	from item it join inventory inv on it.item_id = inv.item_id
@@ -263,59 +275,28 @@ func getComponents(db *sql.DB) ([]Component, error) {
 		return nil, err
 	}
 
-	comps := make([]Component, 0, 10)
-	return scanComponents(rows,comps)
+	items := make([]Item, 0, 10)
+	return scanItems(rows, items)
 }
 
-func getComponentById(db *sql.DB, id int) (Component, error) {
+func getItemByIdWithKind(db *sql.DB, id int, kind ItemKind) (Item, error) {
 	q := `
 	select it.item_id, it.name, it.kind, it.image_id, inv.available, inv.reserved
 	from item it join inventory inv on it.item_id = inv.item_id
-	where it.item_id = ?`
+	where it.item_id = ? and it.kind = ?
+	`
 
-	row := db.QueryRow(q, id)
-	var c Component
-	err := scanComponent(row, &c)
-	return c, err
+	row := db.QueryRow(q, id, kind.String())
+	var item Item
+	err := scanItem(row, &item)
+	return item, err
 }
 
-/**
- * allows for scan from both *sql.Row and *sql.Rows
- * always assumes all fields, and in the order they are defined
- */
-type RowScanner interface {
-	Scan(...any) error
-}
- 
-func scanComponent(scanner RowScanner, comp *Component) error {
-	err := scanner.Scan(&comp.id, &comp.name, &comp.kind, &comp.imageId, &comp.available, &comp.reserved)
-	return err
-}
-
-func scanComponents(rows *sql.Rows, comps []Component) ([]Component, error) {
-	if comps == nil {
-		return nil, errors.New("must give pre-allocated slice")
-	}
-	var c Component
-	for rows.Next() {
-		err := scanComponent(rows, &c)
-		if err != nil {
-			return comps, err
-		}
-		comps = append(comps, c)
-	}
-	if err := rows.Err(); err != nil {
-		return comps, err
-	}
-	return comps, nil
-}
-
-func insertBaseItem(tx *sql.Tx, params CreateGenericItemParams) (BaseItem, error) {
-	created := BaseItem{}
-	kind     := COMPONENT
+func insertBaseItem(tx *sql.Tx, params CreateGenericItemParams) (Item, error) {
+	created  := Item{}
 	reserved := 0
 
-	insertItem      := `
+	insertItem := `
 	insert into item (name, kind)
 	values (?, ?) returning item_id, name, kind, image_id
 	`
@@ -334,7 +315,7 @@ func insertBaseItem(tx *sql.Tx, params CreateGenericItemParams) (BaseItem, error
 		return created, err
 	}
 
-	row := itemStatement.QueryRow(params.name, kind)
+	row := itemStatement.QueryRow(params.name, params.kind)
 	err = row.Scan(&created.id, &created.name, &created.kind, &created.imageId)
 	if err != nil {
 		return created, err
@@ -349,12 +330,65 @@ func insertBaseItem(tx *sql.Tx, params CreateGenericItemParams) (BaseItem, error
 	return created, nil
 }
 
-func createAssembly(db *sql.DB, params CreateAssemblyParams) (Assembly, error) {
-	// insert assembly
-	// check if children reference parent
-	// insert relations to bom_line
+func scanItem(scanner RowScanner, item *Item) error {
+	err := scanner.Scan(&item.id, &item.name, &item.kind, &item.imageId, &item.available, &item.reserved)
+	return err
+}
 
-	var created Assembly
+func scanItems(rows *sql.Rows, items []Item) ([]Item, error) {
+	if items == nil {
+		return nil, errors.New("must give pre-allocated slice")
+	}
+	var item Item
+	for rows.Next() {
+		err := scanItem(rows, &item)
+		if err != nil {
+			return items, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return items, err
+	}
+	return items, nil
+}
+
+func createComponent(db *sql.DB, params CreateComponentParams) (Item, error) {
+	created := Item{}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return created, err
+	}
+	defer tx.Rollback()
+
+	itemParams := CreateGenericItemParams{
+		name: params.name,
+		kind: COMPONENT,
+		available: params.available,
+	}
+	created, err = insertBaseItem(tx, itemParams)
+	if err != nil {
+		return created, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return created, err
+	}
+
+	return created, err
+}
+
+func getComponents(db *sql.DB) ([]Item, error) {
+	return getItemsWithKind(db, COMPONENT)
+}
+
+func getComponentById(db *sql.DB, id int) (Item, error) {
+	return getItemByIdWithKind(db, id, COMPONENT)
+}
+
+func createAssembly(db *sql.DB, params CreateAssemblyParams) (CreateAssemblyResult, error) {
+	var created CreateAssemblyResult
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -371,7 +405,7 @@ func createAssembly(db *sql.DB, params CreateAssemblyParams) (Assembly, error) {
 	if err != nil {
 		return created, err
 	}
-	created.Item.BaseItem = item
+	created.Item = item
 
 	for _, child := range(params.children) {
 		if child.itemId == created.id {
@@ -405,4 +439,12 @@ func createAssembly(db *sql.DB, params CreateAssemblyParams) (Assembly, error) {
 	}
 
 	return created, nil
+}
+
+func getAssemblies(db *sql.DB) ([]Item, error) {
+	return getItemsWithKind(db, ASSEMBLY)
+}
+
+func getAssemblyById(db *sql.DB, id int) (Item, error) {
+	return getItemByIdWithKind(db, id, ASSEMBLY)
 }
