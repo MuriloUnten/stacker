@@ -199,6 +199,13 @@ type AssemblyNode struct {
 	children []AssemblyNode
 }
 
+type BoMRow struct {
+	Item
+	assemblyItemId int
+	childItemId int
+	ammount int
+}
+
 /**
  * allows for scan from both *sql.Row and *sql.Rows
  * always assumes all fields, and in the order they are defined
@@ -447,4 +454,91 @@ func getAssemblies(db *sql.DB) ([]Item, error) {
 
 func getAssemblyById(db *sql.DB, id int) (Item, error) {
 	return getItemByIdWithKind(db, id, ASSEMBLY)
+}
+
+func getAssemblyTree(db *sql.DB, id int) (AssemblyNode, error) {
+	root, err := getAssemblyById(db, id)
+	if err != nil {
+		return AssemblyNode{}, fmt.Errorf("fetch root node: %w", err)
+	}
+
+	q := `
+	WITH RECURSIVE bom_tree AS (
+		SELECT
+			bl.assembly_item_id,
+			bl.child_item_id,
+			bl.ammount,
+			1 AS depth,
+			'/' || bl.assembly_item_id || '/' || bl.child_item_id || '/' AS path
+		FROM bom_line bl
+		WHERE bl.assembly_item_id = ?
+
+		UNION ALL
+
+		SELECT
+			bl.assembly_item_id,
+			bl.child_item_id,
+			bl.ammount,
+			bt.depth + 1,
+			bt.path || bl.child_item_id || '/'
+		FROM bom_line bl
+		JOIN bom_tree bt ON bl.assembly_item_id = bt.child_item_id
+		WHERE bt.path NOT LIKE '%/' || bl.child_item_id || '/%'
+		  AND bt.depth < 50
+	)
+	SELECT
+		bt.assembly_item_id,
+		bt.child_item_id,
+		bt.ammount,
+		it.name,
+		it.kind,
+		it.image_id,
+		inv.available,
+		inv.reserved
+	FROM bom_tree bt
+	JOIN item it ON it.item_id = bt.child_item_id
+	JOIN inventory inv ON it.item_id = inv.item_id
+	ORDER BY bt.depth;
+	`
+
+	rows, err := db.Query(q, id)
+	if err != nil {
+		return AssemblyNode{}, fmt.Errorf("query bom rows: %w", err)
+	}
+
+	childrenOf := make(map[int][]BoMRow)
+	for rows.Next() {
+		var bomRow BoMRow
+		err := rows.Scan(
+			&bomRow.assemblyItemId,
+			&bomRow.childItemId,
+			&bomRow.ammount,
+			&bomRow.name,
+			&bomRow.kind,
+			&bomRow.imageId,
+			&bomRow.available,
+			&bomRow.reserved,
+		)
+		if err != nil {
+			return AssemblyNode{}, fmt.Errorf("scan bom rows: %w", err)
+		}
+		bomRow.Item.id = bomRow.childItemId
+		childrenOf[bomRow.assemblyItemId] = append(childrenOf[bomRow.assemblyItemId], bomRow)
+	}
+	return buildAssemblyRecursive(root, 0, childrenOf, make(map[int]bool)), nil
+}
+
+func buildAssemblyRecursive(item Item, ammount int, childrenOf map[int][]BoMRow, visited map[int]bool) AssemblyNode {
+	node := AssemblyNode{Item: item, ammount: ammount}
+
+	if visited[item.id] {
+		return node
+	}
+	visited[item.id] = true
+	defer delete(visited, item.id) // allow the same item in sibling branches (diamond BOMs)
+
+	for _, child := range childrenOf[item.id] {
+		node.children = append(node.children, buildAssemblyRecursive(child.Item, child.ammount, childrenOf, visited))
+	}
+	return node
 }
