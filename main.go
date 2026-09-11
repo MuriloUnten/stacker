@@ -71,7 +71,7 @@ func main() {
 		version_code text,
 		notes        text,
 		status       text not null default 'draft' check (status in ('draft', 'published', 'deprecated')),
-		created_at   text not null default datetime('now'),
+		created_at   text not null default (datetime('now')),
 		published_at text,
 
 		unique(item_id, version_code)
@@ -87,8 +87,8 @@ func main() {
 		position          integer not null check (position >= 0),
 
 		check (
-			(child_item_kind = 'a' and child_item_version_id is not null) or
-			(child_item_kind = 'c' and child_item_version_id is null)
+			(child_item_kind = 'a' and child_version_id is not null) or
+			(child_item_kind = 'c' and child_version_id is null)
 		)
 	);
 
@@ -99,7 +99,7 @@ func main() {
 		quantity_requested decimal(18, 6) not null check (quantity_requested > 0),
 		quantity_completed decimal(18, 6) not null check (quantity_completed >= 0),
 		status             text not null check (status in ('pending', 'started', 'done', 'cancelled')),
-		created_at         text not null default datetime('now'),
+		created_at         text not null default (datetime('now')),
 		started_at         text,
 		completed_at       text
 	);
@@ -110,7 +110,7 @@ func main() {
 		order_id       integer references manufacture_order(order_id),
 		quantity       decimal(18, 6) not null,
 		kind           text not null check (kind in ('consumption', 'production', 'purchase', 'refurbish', 'sold')),
-		created_at     text not null default datetime('now')
+		created_at     text not null default (datetime('now'))
 	);
 
 	create table if not exists tracker (
@@ -128,15 +128,15 @@ func main() {
 		item_reference_image_id integer primary key,
 		image_id integer not null references image(image_id),
 		item_id  integer not null references item(item_id),
-		order    integer not null check (order >= 0)
-	) ;
+		position integer not null check (position >= 0)
+	);
 
 	-- the following triggers ensure the database proper behavior of components and assemblies
 
 	create trigger if not exists item_version_kind_guard_insert
 	before insert on item_version
 	for each row
-	when (select kind from item where id = new.item_id) != 'a'
+	when (select kind from item where item_id = new.item_id) != 'a'
 	begin
 		select raise(abort, 'only assemblies may have item_version rows');
 	end;
@@ -144,7 +144,7 @@ func main() {
 	create trigger if not exists item_version_kind_guard_update
 	before update on item_version
 	for each row
-	when (select kind from item where id = new.item_id) != 'a'
+	when (select kind from item where item_id = new.item_id) != 'a'
 	begin
 		select raise(abort, 'only assemblies may have item_version rows');
 	end;
@@ -154,7 +154,7 @@ func main() {
 	for each row
 	begin
 		select raise(abort, 'child_item_id does not exist')
-		where not exists (select 1 from item where id = new.child_item_id);
+		where not exists (select 1 from item where item_id = new.child_item_id);
 	end;
 
 	create trigger if not exists bom_line_derive_child_kind_insert
@@ -162,8 +162,8 @@ func main() {
 	for each row
 	begin
 		update bom_line
-		set child_item_kind = (select kind from item where id = new.child_item_id)
-		where id = new.id;
+		set child_item_kind = (select kind from item where item_id = new.child_item_id)
+		where bom_line_id = new.bom_line_id;
 	end;
 	`
 
@@ -172,24 +172,28 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// componentParams := CreateComponentParams{
-	// 	name: "Parafuso Allen M3 10mm",
-	// 	available: 100,
-	// }
-	//
-	// component, err := createComponent(db, componentParams)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Printf("component 1: %#v\n", component)
-	//
-	// componentParams.name = "Porca 1"
-	// componentParams.available = 3
-	// component, err = createComponent(db, componentParams)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-	// fmt.Printf("component 2: %#v\n", component)
+	var params CreateComponentParams
+	params.name = "bolt"
+	params.sku = "1234"
+	params.description = "its just a bolt"
+	params.unit = EACH
+	params.available = 100
+	component, err := createComponent(db, params)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("component 1: %#v\n", component)
+
+	params.name = "Metal sheet"
+	params.sku = "ms001"
+	params.unit = METER_SQR
+	params.description = "black alluminum sheet"
+	params.available = 10.5
+	component, err = createComponent(db, params)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("component 2: %#v\n", component)
 
 	comps, err := getComponents(db)
 	if err != nil {
@@ -280,7 +284,7 @@ type Inventory struct {
 	reserved  float64
 }
 
-type ItemVersion struct {
+type BaseItemVersion struct {
 	id          int
 	itemId      int
 	versionCode string
@@ -289,6 +293,11 @@ type ItemVersion struct {
 	createdAt   time.Time
 	publishedAt *time.Time
 	// TODO consider reference images
+}
+
+type ItemVersion struct {
+	BaseItemVersion
+	children []BomLine
 }
 
 type BomLine struct {
@@ -328,13 +337,13 @@ type CreateAssemblyChildParams struct {
 
 type CreateAssemblyResult struct {
 	Item 
-	version CreateItemVersionResult
+	version ItemVersion
 }
 
 type AssemblyNode struct {
 	BaseItem
 	inventory Inventory
-	version   ItemVersion
+	version   BaseItemVersion
 	quantity  float64
 	children  []AssemblyNode
 }
@@ -350,11 +359,6 @@ type CreateItemVersionParams struct {
 	versionCode  string
 	versionNotes string
 	children     []CreateAssemblyChildParams
-}
-
-type CreateItemVersionResult struct {
-	ItemVersion
-	children []BomLine
 }
 
 func getItems(db *sql.DB) ([]Item, error) {
@@ -419,7 +423,7 @@ func insertBaseItem(tx *sql.Tx, kind ItemKind, params CreateBaseItemParams) (Ite
 
 	insertItem := `
 	insert into item (name, sku, kind, description)
-	values (?, ?) returning item_id, name, sku, kind, description, thumbnail_id
+	values (?, ?, ?, ?) returning item_id, name, sku, kind, description, thumbnail_id
 	`
 
 	insertInventory := `
@@ -436,12 +440,13 @@ func insertBaseItem(tx *sql.Tx, kind ItemKind, params CreateBaseItemParams) (Ite
 		return created, err
 	}
 
-	row := itemStatement.QueryRow(params.name, kind)
+	row := itemStatement.QueryRow(params.name, params.sku, kind, params.description)
 	err = row.Scan(
 		&created.id,
 		&created.name,
 		&created.sku,
 		&created.kind,
+		&created.description,
 		&created.thumbnailId,
 	)
 	if err != nil {
@@ -514,6 +519,19 @@ func scanBomLine(scanner RowScanner, bomLine *BomLine) error {
 	return err
 }
 
+func scanItemVersion(scanner RowScanner, iv *BaseItemVersion) error {
+	err := scanner.Scan(
+		&iv.id,
+		&iv.itemId,
+		&iv.versionCode,
+		&iv.notes,
+		&iv.status,
+		&iv.createdAt,
+		&iv.publishedAt,
+	)
+	return err
+}
+
 func createComponent(db *sql.DB, params CreateComponentParams) (Item, error) {
 	created := Item{}
 
@@ -523,11 +541,7 @@ func createComponent(db *sql.DB, params CreateComponentParams) (Item, error) {
 	}
 	defer tx.Rollback()
 
-	itemParams := CreateBaseItemParams{
-		name: params.name,
-		available: params.available,
-	}
-	created, err = insertBaseItem(tx, COMPONENT, itemParams)
+	created, err = insertBaseItem(tx, COMPONENT, params.CreateBaseItemParams)
 	if err != nil {
 		return created, err
 	}
@@ -587,111 +601,138 @@ func getAssemblyById(db *sql.DB, id int) (Item, error) {
 	return getItemByIdWithKind(db, id, ASSEMBLY)
 }
 
-// TODO refactor this whole function
-func getAssemblyTree(db *sql.DB, id int) (AssemblyNode, error) {
-	root, err := getAssemblyById(db, id)
-	if err != nil {
-		return AssemblyNode{}, fmt.Errorf("fetch root node: %w", err)
-	}
+// func getAssemblyTree(db *sql.DB, versionId int) (AssemblyNode, error) {
+// 	var root AssemblyNode
+// 	v, err := getBaseItemVersion(db, versionId)
+// 	if err != nil {
+// 		return root, fmt.Errorf("fetch root node: %w", err)
+// 	}
+// 	root.version = v
+//
+// 	q := `
+// 	WITH RECURSIVE bom_tree AS (
+// 		SELECT
+// 			iv.item_id as parent_item_id,
+// 			bl.parent_version_id,
+// 			bl.child_item_id,
+// 			bl.quantity,
+// 			bl.position,
+// 			1 AS depth,
+// 			'/' || iv.item_id || '/' || bl.child_item_id || '/' AS path
+// 		FROM bom_line bl
+// 		join item_version iv on bl.parent_version_id = iv.version_id
+// 		WHERE bl.parent_version_id = ?
+//
+// 		UNION ALL
+//
+// 		SELECT
+// 			iv.item_id as parent_item_id,
+// 			bl.parent_version_id,
+// 			bl.child_item_id,
+// 			bl.quantity,
+// 			bl.position,
+// 			bt.depth + 1,
+// 			bt.path || bl.child_item_id || '/'
+// 		FROM bom_line bl
+// 		join item_version iv on bl.parent_version_id = iv.version_id
+// 		JOIN bom_tree bt ON iv.item_id = bt.child_item_id
+// 		WHERE bt.path NOT LIKE '%/' || bl.child_item_id || '/%'
+// 		  AND bt.depth < 50
+// 	)
+// 	SELECT
+// 		bt.parent_version_id,
+// 		bt.child_item_id,
+// 		bt.quantity,
+// 		it.item_id,
+// 		it.name,
+// 		it.kind,
+// 		it.sku,
+// 		it.description,
+// 		it.thumbnail_id,
+// 		it.current_version_id,
+// 		iv.version_code,
+// 		iv.notes,
+// 		iv.status,
+// 		iv.created_at,
+// 		iv.published_at,
+// 		inv.available,
+// 		inv.reserved
+// 	FROM bom_tree bt
+// 	join item_version iv on bt.child_item_id = iv.version_id -- TODO check this (good chance this is wrong)
+// 	JOIN item it ON bt.child_item_id = it.item_id
+// 	JOIN inventory inv ON it.item_id = inv.item_id
+// 	ORDER BY bt.depth;
+// 	`
+//
+// 	rows, err := db.Query(q, versionId)
+// 	if err != nil {
+// 		return AssemblyNode{}, fmt.Errorf("query bom rows: %w", err)
+// 	}
+//
+// 	childrenOf := make(map[int][]BomRow)
+// 	for rows.Next() {
+// 		var bomRow BomRow
+// 		err := rows.Scan(
+// 			&bomRow.assemblyItemId,
+// 			&bomRow.childItemId,
+// 			&bomRow.quantity,
+// 			&bomRow.name,
+// 			&bomRow.kind,
+// 			&bomRow.thumbnailId,
+// 			&bomRow.inventory.available,
+// 			&bomRow.inventory.reserved,
+// 		)
+// 		if err != nil {
+// 			return AssemblyNode{}, fmt.Errorf("scan bom rows: %w", err)
+// 		}
+// 		bomRow.Item.id = bomRow.childItemId
+// 		childrenOf[bomRow.assemblyItemId] = append(childrenOf[bomRow.assemblyItemId], bomRow)
+// 	}
+// 	return buildAssemblyRecursive(root, 0, childrenOf, make(map[int]bool)), nil
+// }
+//
+// // TODO fix this. There is a problem here because AssemblyNode has an ItemVersion,
+// // but that does not have item data inside it
+// func buildAssemblyRecursive(item Item, quantity float64, childrenOf map[int][]BomRow, visited map[int]bool) AssemblyNode {
+// 	node := AssemblyNode{ItemVersion: item, quantity: quantity}
+//
+// 	if visited[item.id] {
+// 		return node
+// 	}
+// 	visited[item.id] = true
+// 	defer delete(visited, item.id) // allow the same item in sibling branches (diamond BOMs)
+//
+// 	for _, child := range childrenOf[item.id] {
+// 		node.children = append(node.children, buildAssemblyRecursive(child.Item, child.quantity, childrenOf, visited))
+// 	}
+// 	return node
+// }
 
-	q := `
-	WITH RECURSIVE bom_tree AS (
-		SELECT
-			bl.assembly_item_id,
-			bl.child_item_id,
-			bl.quantity,
-			1 AS depth,
-			'/' || bl.assembly_item_id || '/' || bl.child_item_id || '/' AS path
-		FROM bom_line bl
-		WHERE bl.assembly_item_id = ?
-
-		UNION ALL
-
-		SELECT
-			bl.assembly_item_id,
-			bl.child_item_id,
-			bl.quantity,
-			bt.depth + 1,
-			bt.path || bl.child_item_id || '/'
-		FROM bom_line bl
-		JOIN bom_tree bt ON bl.assembly_item_id = bt.child_item_id
-		WHERE bt.path NOT LIKE '%/' || bl.child_item_id || '/%'
-		  AND bt.depth < 50
-	)
-	SELECT
-		bt.assembly_item_id,
-		bt.child_item_id,
-		bt.quantity,
-		it.name,
-		it.kind,
-		it.thumbnail_id,
-		inv.available,
-		inv.reserved
-	FROM bom_tree bt
-	JOIN item it ON it.item_id = bt.child_item_id
-	JOIN inventory inv ON it.item_id = inv.item_id
-	ORDER BY bt.depth;
-	`
-
-	rows, err := db.Query(q, id)
-	if err != nil {
-		return AssemblyNode{}, fmt.Errorf("query bom rows: %w", err)
-	}
-
-	childrenOf := make(map[int][]BomRow)
-	for rows.Next() {
-		var bomRow BomRow
-		err := rows.Scan(
-			&bomRow.assemblyItemId,
-			&bomRow.childItemId,
-			&bomRow.quantity,
-			&bomRow.name,
-			&bomRow.kind,
-			&bomRow.thumbnailId,
-			&bomRow.inventory.available,
-			&bomRow.inventory.reserved,
-		)
-		if err != nil {
-			return AssemblyNode{}, fmt.Errorf("scan bom rows: %w", err)
-		}
-		bomRow.Item.id = bomRow.childItemId
-		childrenOf[bomRow.assemblyItemId] = append(childrenOf[bomRow.assemblyItemId], bomRow)
-	}
-	return buildAssemblyRecursive(root, 0, childrenOf, make(map[int]bool)), nil
-}
-
-// TODO fix this. There is a problem here because AssemblyNode has an ItemVersion,
-// but that does not have item data inside it
-func buildAssemblyRecursive(item Item, quantity float64, childrenOf map[int][]BomRow, visited map[int]bool) AssemblyNode {
-	node := AssemblyNode{ItemVersion: item, quantity: quantity}
-
-	if visited[item.id] {
-		return node
-	}
-	visited[item.id] = true
-	defer delete(visited, item.id) // allow the same item in sibling branches (diamond BOMs)
-
-	for _, child := range childrenOf[item.id] {
-		node.children = append(node.children, buildAssemblyRecursive(child.Item, child.quantity, childrenOf, visited))
-	}
-	return node
-}
-
-func createItemVersion(tx *sql.Tx, itemId int, params CreateItemVersionParams) (CreateItemVersionResult, error) {
+func createItemVersion(tx *sql.Tx, itemId int, params CreateItemVersionParams) (ItemVersion, error) {
+	var created ItemVersion
 	insertVersionQuery := `
 	insert into item_version (item_id, version_code, notes)
 	values (?, ?, ?)
 	returning version_id, item_id, version_code, notes, status, created_at, published_at
 	`
-	// TODO execute the query
+	insertVersionStmt, err := tx.Prepare(insertVersionQuery)
+	if err != nil {
+		return created, err
+	}
+	row := insertVersionStmt.QueryRow(itemId, params.versionCode, params.versionNotes)
+	err = scanItemVersion(row, &created.BaseItemVersion)
+	if err != nil {
+		return created, err
+	}
 
-	var created CreateItemVersionResult
+	// TODO fetch all items from params.children && verify that they are what they are supposed to be
+	// and that the given versions are proper published versions
 	for _, child := range(params.children) {
 		if child.itemId == itemId {
 			return created, errors.New("attempted to create self referencing assembly")
 		}
 		if child.quantity <= 0 {
-			return created, errors.New("assembly child must have quantity of at least 1")
+			return created, errors.New("assembly child must have quantity greater than zero")
 		}
 	}
 
@@ -706,11 +747,84 @@ func createItemVersion(tx *sql.Tx, itemId int, params CreateItemVersionParams) (
 	created.children = make([]BomLine, 0, len(params.children))
 	var bomLine BomLine
 	for i, child := range(params.children) {
-		row := stmt.QueryRow(TODO_versionId, child.itemId, child.itemVersionId, child.quantity, i)
+		row := stmt.QueryRow(
+			created.id,
+			child.itemId,
+			child.itemVersionId,
+			child.quantity,
+			i,
+		)
 		err := scanBomLine(row, &bomLine)
 		if err != nil {
 			return created, err
 		}
 		created.children = append(created.children, bomLine)
 	}
+
+	return created, nil
+}
+
+func getItemVersionById(db *sql.DB, versionId int) (ItemVersion, error) {
+	var v ItemVersion
+	var baseItemVersion BaseItemVersion
+	baseItemVersion, err := getBaseItemVersion(db, versionId)
+	if err != nil {
+		return v, err
+	}
+	v.BaseItemVersion = baseItemVersion
+
+	q := `
+	select bom_line_id, parent_version_id, child_item_id, child_version_id, quantity, position from bom_line
+	order by position asc
+	where parent_version_id = ?
+	`
+	stmt, err := db.Prepare(q)
+	if err != nil {
+		return v, err
+	}
+	rows, err := stmt.Query(versionId)
+	if err != nil {
+		return v, err
+	}
+
+	v.children = make([]BomLine, 0, 10)
+	var bomLine BomLine
+	for (rows.Next()) {
+		err = scanBomLine(rows, &bomLine)
+		if err != nil {
+			return v, err
+		}
+		v.children = append(v.children, bomLine)
+	}
+
+	return v, nil
+}
+
+// TODO implement
+func getItemVersionsByItem(tx *sql.DB, itemId int) ([]ItemVersion, error) {
+	// versionQuery := `
+	// select version_id, item_id, version_code, notes, status, created_at, published_at from item_version v 
+	// where v.item_id = ?
+	// order by created_at desc
+	// `
+	return nil, fmt.Errorf("not implemented")
+}
+
+func getBaseItemVersion(db *sql.DB, versionId int) (BaseItemVersion, error) {
+	var v BaseItemVersion
+	q := `
+	select version_id, item_id, version_code, notes, status, created_at, published_at
+	from item_version v where v.version_id = ?
+	`
+	stmt, err := db.Prepare(q)
+	if err != nil {
+		return v, err
+	}
+	row := stmt.QueryRow(versionId)
+	err = scanItemVersion(row, &v)
+	if err != nil {
+		return v, err
+	}
+
+	return v, nil
 }
