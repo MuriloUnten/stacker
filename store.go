@@ -3,8 +3,10 @@ package main
 import (
 	"database/sql"
 	"log"
-	"github.com/pressly/goose/v3"
 	"embed"
+
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/pressly/goose/v3"
 )
 
 //go:embed db/migrations/*.sql
@@ -18,8 +20,8 @@ type Store struct {
 	db *sql.DB
 }
 
-func StoreInit() *Store {
-	db, err := Connect("file:db/database.db?_foreign_keys=on")
+func StoreInit(path string) *Store {
+	db, err := Connect("file:" + path + "?_journal_mode=WAL&_foreign_keys=on")
 	if err != nil {
 		log.Fatal(err)
 	}

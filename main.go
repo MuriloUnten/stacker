@@ -7,7 +7,6 @@ import (
 	"log"
 	"time"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/shopspring/decimal"
 )
 
@@ -20,7 +19,7 @@ import (
  * - [ ] Implement Store
  * - [ ] Prepare all statements beforehand
  * - [ ] Read about prepared statements in transactions
- * - [ ] Enable write ahead logging (WAL)
+ * - [x] Enable write ahead logging (WAL)
  * - [/] Think about assembly versioning and implement it
  * - [/] Implement recursive read of BoM tree
  * - [/] Implement migration system
@@ -39,7 +38,7 @@ import (
  * - [ ] Rewatch the McMaster-Carr video (https://www.youtube.com/watch?v=-Ln-8QM8KhQ)
  */
 func main() {
-	s := StoreInit()
+	s := StoreInit("db/database.db")
 	defer s.Deinit()
 
 	var params CreateComponentParams
