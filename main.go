@@ -40,7 +40,7 @@ import (
  */
 func main() {
 	// NOTE: the _foreign_keys MUST STAY ON else new assemblies might cause recursions
-	db, err := sql.Open("sqlite3", "file:database.db?_foreign_keys=on")
+	db, err := sql.Open("sqlite3", "file:db/database.db?_foreign_keys=on")
 	if err != nil {
 		log.Fatal(err)
 	}
