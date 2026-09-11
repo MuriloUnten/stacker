@@ -8,12 +8,13 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/shopspring/decimal"
 )
 
 /**
  * TODO
  * - [ ] implement endpoints for /items/{id}/versions
- * - [ ] use decimal types instead of float64's (https://github.com/shopspring/decimal)
+ * - [x] use decimal types instead of decimal.Decimal's (https://github.com/shopspring/decimal)
  * - [x] Position in bom_line
  * - [ ] Treat possible active version on item related functions
  * - [ ] Implement Store
@@ -177,7 +178,7 @@ func main() {
 	params.sku = "1234"
 	params.description = "its just a bolt"
 	params.unit = EACH
-	params.available = 100
+	params.available = decimal.NewFromInt(100)
 	component, err := createComponent(db, params)
 	if err != nil {
 		log.Fatal(err)
@@ -188,7 +189,7 @@ func main() {
 	params.sku = "ms001"
 	params.unit = METER_SQR
 	params.description = "black alluminum sheet"
-	params.available = 10.5
+	params.available = decimal.NewFromFloat(10.5)
 	component, err = createComponent(db, params)
 	if err != nil {
 		log.Fatal(err)
@@ -280,8 +281,8 @@ type Item struct {
 type Inventory struct {
 	itemId    int
 	unit      UnitOfMeasurement
-	available float64
-	reserved  float64
+	available decimal.Decimal
+	reserved  decimal.Decimal
 }
 
 type BaseItemVersion struct {
@@ -305,7 +306,7 @@ type BomLine struct {
 	parentVersionId int
 	childItemId     int
 	childVersionId  int
-	quantity        float64
+	quantity        decimal.Decimal
 	position        int
 }
 
@@ -317,7 +318,7 @@ type CreateBaseItemParams struct {
 	sku         string
 	description string
 	unit        UnitOfMeasurement
-	available   float64
+	available   decimal.Decimal
 }
 
 type CreateComponentParams struct {
@@ -332,7 +333,7 @@ type CreateAssemblyParams struct {
 type CreateAssemblyChildParams struct {
 	itemId        int
 	itemVersionId *int
-	quantity      float64
+	quantity      decimal.Decimal
 }
 
 type CreateAssemblyResult struct {
@@ -344,7 +345,7 @@ type AssemblyNode struct {
 	BaseItem
 	inventory Inventory
 	version   BaseItemVersion
-	quantity  float64
+	quantity  decimal.Decimal
 	children  []AssemblyNode
 }
 
@@ -352,7 +353,7 @@ type BomRow struct {
 	Item
 	assemblyItemId int
 	childItemId int
-	quantity float64
+	quantity decimal.Decimal
 }
 
 type CreateItemVersionParams struct {
@@ -693,7 +694,7 @@ func getAssemblyById(db *sql.DB, id int) (Item, error) {
 //
 // // TODO fix this. There is a problem here because AssemblyNode has an ItemVersion,
 // // but that does not have item data inside it
-// func buildAssemblyRecursive(item Item, quantity float64, childrenOf map[int][]BomRow, visited map[int]bool) AssemblyNode {
+// func buildAssemblyRecursive(item Item, quantity decimal.Decimal, childrenOf map[int][]BomRow, visited map[int]bool) AssemblyNode {
 // 	node := AssemblyNode{ItemVersion: item, quantity: quantity}
 //
 // 	if visited[item.id] {
@@ -731,7 +732,7 @@ func createItemVersion(tx *sql.Tx, itemId int, params CreateItemVersionParams) (
 		if child.itemId == itemId {
 			return created, errors.New("attempted to create self referencing assembly")
 		}
-		if child.quantity <= 0 {
+		if child.quantity.LessThanOrEqual(decimal.NewFromInt(0)) {
 			return created, errors.New("assembly child must have quantity greater than zero")
 		}
 	}
