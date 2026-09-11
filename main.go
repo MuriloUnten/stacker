@@ -5,30 +5,37 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
 /**
  * TODO
- * - Implement Store
- * - Prepare all statements beforehand
- * - Read about prepared statements in transactions
- * - Enable write ahead logging
- * - Think about assembly versioning and implement it
- * - Implement recursive read of BoM tree
- * - Implement migration system
- * - Implement connection pool
- * - Add better errors
- * - think about having timestamps in more things
- * - Test stuff
- * - Think about ensuring all statement call will take the right ammount of arguments
- * - Study and think about context and timeouts
- * - Add more fields to image table (mime_type, width, height, etc)
- * - Add optional image input to item creation functions
- * - Think about how to implement a tracker scanner goroutine
- * - Implement manufacture orders
- * - Think about manufacture orders having another state maybe called refurbished or something that restores inventory
+ * - [ ] implement endpoints for /items/{id}/versions
+ * - [ ] use decimal types instead of float64's (https://github.com/shopspring/decimal)
+ * - [x] Position in bom_line
+ * - [ ] Treat possible active version on item related functions
+ * - [ ] Implement Store
+ * - [ ] Prepare all statements beforehand
+ * - [ ] Read about prepared statements in transactions
+ * - [ ] Enable write ahead logging (WAL)
+ * - [/] Think about assembly versioning and implement it
+ * - [/] Implement recursive read of BoM tree
+ * - [ ] Implement migration system
+ * - [ ] Implement connection pool
+ * - [ ] Add better errors
+ * - [ ] think about having timestamps in more things
+ * - [ ] Write testing framework
+ * - [ ] Add Tests
+ * - [ ] Consider using sqlc
+ * - [ ] Study and think about context and timeouts
+ * - [ ] Add more fields to image table (mime_type, width, height, etc)
+ * - [ ] Add optional image input to item creation functions
+ * - [ ] Think about how to implement a tracker scanner goroutine
+ * - [ ] Implement manufacture orders
+ * - [ ] Think about manufacture orders having another state maybe called refurbished or something that restores inventory
+ * - [ ] Rewatch the McMaster-Carr video (https://www.youtube.com/watch?v=-Ln-8QM8KhQ)
  */
 func main() {
 	// NOTE: the _foreign_keys MUST STAY ON else new assemblies might cause recursions
@@ -40,47 +47,124 @@ func main() {
 
 	bootstrapStmt := `
 	create table if not exists item (
-		item_id  integer primary key,
-		name     text not null,
-		kind     text not null check (kind in ('assembly', 'component')),
-		image_id integer references image(image_id)
+		item_id      integer primary key,
+		name         text not null,
+		sku          text unique not null,
+		kind         text not null check (kind in ('a', 'c')), -- (assembly | component)
+		description  text,
+		thumbnail_id integer references image(image_id),
+
+		current_version_id integer references item_version(version_id)  -- NULL for components, always
 	);
 
 	create table if not exists inventory (
 		item_id   integer primary key references item(item_id),
-		available integer not null check (available >= 0),
-		reserved  integer not null check (reserved >= 0)
+		uom       text not null check (uom in ('each', 'meter', 'centimeter', 'millimiter', 'gram', 'kilogram', 'meter_sqr')),
+		available decimal(18, 6) not null check (available >= 0),
+		reserved  decimal(18, 6) not null check (reserved >= 0)
+	);
+
+	-- exclusively assemblies get item_versions (never components)
+	create table if not exists item_version (
+		version_id   integer primary key,
+		item_id      integer not null references item(item_id),
+		version_code text,
+		notes        text,
+		status       text not null check (status in ('draft', 'published', 'deprecated')),
+		created_at   text not null default datetime('now'),
+		published_at text,
+
+		unique(item_id, version_code)
 	);
 
 	create table if not exists bom_line (
-		assembly_item_id integer not null references item(item_id),
-		child_item_id    integer not null references item(item_id),
-		ammount          integer not null check (ammount > 0),
+		bom_line_id       integer primary key,
+		parent_version_id integer not null references item_version(version_id),
+		child_item_id     integer not null references item(item_id),
+		child_version_id  integer references item_version(version_id), -- NULL for components, always
+		child_item_kind   text not null check (child_item_kind in ('a', 'c')), -- we store this field here just to ensure child_version_id matches child kind
+		quantity          decimal(18, 6) not null check (quantity > 0),
+		position          integer not null check (position >= 0),
 
-		primary key (assembly_item_id, child_item_id)
+		check (
+			(child_item_kind = 'a' and child_item_version_id is not null) or
+			(child_item_kind = 'c' and child_item_version_id is null)
+		)
 	);
 
 	create table if not exists manufacture_order (
-		order_id          integer primary key,
-		item_id           integer not null references item(item_id),
-		ammount_requested integer not null check (ammount_requested > 0),
-		ammount_completed integer not null check (ammount_completed >= 0),
-		status            text not null check (status in ('pending', 'started', 'done', 'cancelled')),
-		created_at        datetime not null,
-		started_at        datetime,
-		completed_at      datetime
+		order_id           integer primary key,
+		item_id            integer not null references item(item_id),
+		item_version_id    integer not null references item_version(version_id),
+		quantity_requested decimal(18, 6) not null check (quantity_requested > 0),
+		quantity_completed decimal(18, 6) not null check (quantity_completed >= 0),
+		status             text not null check (status in ('pending', 'started', 'done', 'cancelled')),
+		created_at         text not null default datetime('now'),
+		started_at         text,
+		completed_at       text
+	);
+
+	create table if not exists stock_transaction (
+		transaction_id integer primary key,
+		item_id        integer references item(item_id),
+		order_id       integer references manufacture_order(order_id),
+		quantity       decimal(18, 6) not null,
+		kind           text not null check (kind in ('consumption', 'production', 'purchase', 'refurbish', 'sold')),
+		created_at     text not null default datetime('now')
 	);
 
 	create table if not exists tracker (
 		tracker_id integer primary key,
 		item_id    integer not null references item(item_id),
-		threshold  integer not null check (threshold >= 0)
+		threshold  decimal(18, 6) not null check (threshold >= 0)
 	);
 
 	create table if not exists image (
 		image_id integer primary key,
 		content  blob not null
 	);
+
+	create table if not exists item_reference_image (
+		item_reference_image_id integer primary key,
+		image_id integer not null references image(image_id),
+		item_id  integer not null references item(item_id),
+		order    integer not null check (order >= 0)
+	) ;
+
+	-- the following triggers ensure the database proper behavior of components and assemblies
+
+	create trigger if not exists item_version_kind_guard_insert
+	before insert on item_version
+	for each row
+	when (select kind from item where id = new.item_id) != 'a'
+	begin
+		select raise(abort, 'only assemblies may have item_version rows');
+	end;
+
+	create trigger if not exists item_version_kind_guard_update
+	before update on item_version
+	for each row
+	when (select kind from item where id = new.item_id) != 'a'
+	begin
+		select raise(abort, 'only assemblies may have item_version rows');
+	end;
+
+	create trigger if not exists bom_line_set_child_kind_insert
+	before insert on bom_line
+	for each row
+	begin
+		select raise(abort, 'child_item_id does not exist')
+		where not exists (select 1 from item where id = new.child_item_id);
+	end;
+
+	create trigger if not exists bom_line_derive_child_kind_insert
+	after insert on bom_line
+	for each row
+	begin
+		update bom_line
+		set child_item_kind = (select kind from item where id = new.child_item_id)
+		where id = new.id;
+	end;
 	`
 
 	_, err = db.Exec(bootstrapStmt)
@@ -135,119 +219,134 @@ func (k ItemKind) String() string {
 	return string(k)
 }
 const (
-	COMPONENT ItemKind = "component"
-	ASSEMBLY  ItemKind = "assembly"
+	COMPONENT ItemKind = "c"
+	ASSEMBLY  ItemKind = "a"
+)
+
+type TransactionKind string
+const (
+	CONSUMPTION TransactionKind = "consumption"
+	PRODUCTION  TransactionKind = "production"
+	PURCHASE    TransactionKind = "purchase"
+	REFURBISH   TransactionKind = "refurbish"
+	SOLD        TransactionKind = "sold"
+)
+
+type UnitOfMeasurement string
+const (
+	EACH       UnitOfMeasurement = "each"
+	METER      UnitOfMeasurement = "meter"
+	CENTIMETER UnitOfMeasurement = "centimeter"
+	MILLIMITER UnitOfMeasurement = "millimiter"
+	GRAM       UnitOfMeasurement = "gram"
+	KILOGRAM   UnitOfMeasurement = "kilogram"
+	METER_SQR  UnitOfMeasurement = "meter_sqr"
+)
+
+type OrderStatus string
+const (
+	PENDING   OrderStatus = "pending"
+	STARTED   OrderStatus = "started"
+	DONE      OrderStatus = "done"
+	CANCELLED OrderStatus = "cancelled"
+)
+
+type BomStatus string
+const (
+	DRAFT      BomStatus = "draft"
+	PUBLISHED  BomStatus = "published"
+	DEPRECATED BomStatus = "deprecated"
 )
 
 type Item struct {
-	id      int
-	name    string
-	kind    ItemKind
-	imageId *int
+	id          int
+	name        string
+	sku         string
+	kind        ItemKind
+	description string
+	thumbnailId *int
 
-	available int
-	reserved  int
+	inventory      Inventory
+	currentVersion *ItemVersion
 }
 
-type BoMLine struct {
-	assemblyItemId int
-	childItemId    int
-	ammount        int
+type Inventory struct {
+	itemId    int
+	unit      UnitOfMeasurement
+	available float64
+	reserved  float64
+}
+
+type ItemVersion struct {
+	id          int
+	itemId      int
+	versionCode string
+	notes       string
+	status      BomStatus
+	createdAt   time.Time
+	publishedAt *time.Time
+	// TODO consider reference images
+}
+
+type BomLine struct {
+	id              int
+	parentVersionId int
+	childItemId     int
+	childVersionId  int
+	quantity        float64
+	position        int
+}
+
+/**
+ * Params for the creation of a base item without a version
+ */
+type CreateBaseItemParams struct {
+	name        string
+	sku         string
+	description string
+	unit        UnitOfMeasurement
+	available   float64
 }
 
 type CreateComponentParams struct {
-	name      string
-	available int
-}
-
-type CreateItemChildParams struct {
-	itemId int
-	ammount int
-}
-
-type CreateItemParams struct {
-	name      string
-	kind      ItemKind
-	available int
-	children  []CreateItemChildParams
+	CreateBaseItemParams
 }
 
 type CreateAssemblyParams struct {
-	name      string
-	available int
-	children  []CreateItemChildParams
+	CreateBaseItemParams
+	versionCode  string
+	versionNotes string
+	children     []CreateAssemblyChildParams
+}
+
+type CreateAssemblyChildParams struct {
+	itemId        int
+	itemVersionId *int
+	quantity      float64
 }
 
 type CreateAssemblyResult struct {
 	Item
-	children []BoMLine
-}
-
-/**
- * Params for the creation of the base item shared between Assembly and Component
- * (which is basically the Component itself)
- */
-type CreateGenericItemParams struct {
-	name      string
-	kind      ItemKind
-	available int
+	children []BomLine
 }
 
 type AssemblyNode struct {
-	Item
-	ammount int
+	ItemVersion
+	quantity float64
 	children []AssemblyNode
 }
 
-type BoMRow struct {
+type BomRow struct {
 	Item
 	assemblyItemId int
 	childItemId int
-	ammount int
-}
-
-/**
- * allows for scan from both *sql.Row and *sql.Rows
- * always assumes all fields, and in the order they are defined
- */
-type RowScanner interface {
-	Scan(...any) error
-}
-
-/**
- * When item is a component, children must be empty or nil
- * All children must already exist
- * 
- */
-func createItem(db *sql.DB, params CreateItemParams) (Item, error) {
-	var item Item
-	switch params.kind {
-	case COMPONENT:
-		if len(params.children) != 0 {
-			return item, errors.New("children must be nil or empty when creating a component")
-		}
-		componentParams := CreateComponentParams{
-			name: params.name,
-			available: params.available,
-		}
-		component, err := createComponent(db, componentParams) 
-		return component, err
-	case ASSEMBLY:
-		assemblyParams := CreateAssemblyParams{
-			name: params.name,
-			available: params.available,
-			children: params.children,
-		}
-		assembly, err := createAssembly(db, assemblyParams)
-		return assembly.Item, err
-	default:
-		return item, errors.New("invalid kind")
-	}
+	quantity float64
 }
 
 func getItems(db *sql.DB) ([]Item, error) {
 	q := `
-	select it.item_id, it.name, it.kind, it.image_id, inv.available, inv.reserved
+	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id,
+	inv.uom, inv.available, inv.reserved
 	from item it join inventory inv on it.item_id = inv.item_id
 	`
 	rows, err := db.Query(q)
@@ -261,7 +360,8 @@ func getItems(db *sql.DB) ([]Item, error) {
 
 func getItemById(db *sql.DB, id int) (Item, error) {
 	q := `
-	select it.item_id, it.name, it.kind, it.image_id, inv.available, inv.reserved
+	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id,
+	inv.uom, inv.available, inv.reserved
 	from item it join inventory inv on it.item_id = inv.item_id
 	where it.item_id = ?`
 
@@ -273,7 +373,8 @@ func getItemById(db *sql.DB, id int) (Item, error) {
 
 func getItemsWithKind(db *sql.DB, kind ItemKind) ([]Item, error) {
 	q := `
-	select it.item_id, it.name, it.kind, it.image_id, inv.available, inv.reserved
+	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id,
+	inv.uom, inv.available, inv.reserved
 	from item it join inventory inv on it.item_id = inv.item_id
 	where it.kind = ?
 	`
@@ -288,7 +389,7 @@ func getItemsWithKind(db *sql.DB, kind ItemKind) ([]Item, error) {
 
 func getItemByIdWithKind(db *sql.DB, id int, kind ItemKind) (Item, error) {
 	q := `
-	select it.item_id, it.name, it.kind, it.image_id, inv.available, inv.reserved
+	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id, inv.uom, inv.available, inv.reserved
 	from item it join inventory inv on it.item_id = inv.item_id
 	where it.item_id = ? and it.kind = ?
 	`
@@ -299,18 +400,17 @@ func getItemByIdWithKind(db *sql.DB, id int, kind ItemKind) (Item, error) {
 	return item, err
 }
 
-func insertBaseItem(tx *sql.Tx, params CreateGenericItemParams) (Item, error) {
+func insertBaseItem(tx *sql.Tx, kind ItemKind, params CreateBaseItemParams) (Item, error) {
 	created  := Item{}
-	reserved := 0
 
 	insertItem := `
-	insert into item (name, kind)
-	values (?, ?) returning item_id, name, kind, image_id
+	insert into item (name, sku, kind, description)
+	values (?, ?) returning item_id, name, sku, kind, description, thumbnail_id
 	`
 
 	insertInventory := `
-	insert into inventory (item_id, available, reserved)
-	values (?, ?, ?) returning available, reserved
+	insert into inventory (item_id, uom, available, reserved)
+	values (?, ?, ?, 0) returning uom, available, reserved
 	`
 
 	itemStatement, err := tx.Prepare(insertItem)
@@ -322,14 +422,24 @@ func insertBaseItem(tx *sql.Tx, params CreateGenericItemParams) (Item, error) {
 		return created, err
 	}
 
-	row := itemStatement.QueryRow(params.name, params.kind)
-	err = row.Scan(&created.id, &created.name, &created.kind, &created.imageId)
+	row := itemStatement.QueryRow(params.name, kind)
+	err = row.Scan(
+		&created.id,
+		&created.name,
+		&created.sku,
+		&created.kind,
+		&created.thumbnailId,
+	)
 	if err != nil {
 		return created, err
 	}
 
-	row = inventoryStatement.QueryRow(created.id, params.available, reserved)
-	err = row.Scan(&created.available, &created.reserved)
+	row = inventoryStatement.QueryRow(created.id, params.unit, params.available)
+	err = row.Scan(
+		&created.inventory.unit,
+		&created.inventory.available,
+		&created.inventory.reserved,
+	)
 	if err != nil {
 		return created, err
 	}
@@ -337,8 +447,25 @@ func insertBaseItem(tx *sql.Tx, params CreateGenericItemParams) (Item, error) {
 	return created, nil
 }
 
+/**
+ * allows for scan from both *sql.Row and *sql.Rows
+ * always assumes all fields, and in the order they are defined
+ */
+type RowScanner interface {
+	Scan(...any) error
+}
+
 func scanItem(scanner RowScanner, item *Item) error {
-	err := scanner.Scan(&item.id, &item.name, &item.kind, &item.imageId, &item.available, &item.reserved)
+	err := scanner.Scan(
+		&item.id,
+		&item.name,
+		&item.sku,
+		&item.kind,
+		&item.thumbnailId,
+		&item.inventory.unit,
+		&item.inventory.available,
+		&item.inventory.reserved,
+	)
 	return err
 }
 
@@ -360,6 +487,18 @@ func scanItems(rows *sql.Rows, items []Item) ([]Item, error) {
 	return items, nil
 }
 
+func scanBomLine(scanner RowScanner, bomLine *BomLine) error {
+	err := scanner.Scan(
+		&bomLine.id,
+		&bomLine.parentVersionId,
+		&bomLine.childItemId,
+		&bomLine.childVersionId,
+		&bomLine.quantity,
+		&bomLine.position,
+	)
+	return err
+}
+
 func createComponent(db *sql.DB, params CreateComponentParams) (Item, error) {
 	created := Item{}
 
@@ -369,12 +508,11 @@ func createComponent(db *sql.DB, params CreateComponentParams) (Item, error) {
 	}
 	defer tx.Rollback()
 
-	itemParams := CreateGenericItemParams{
+	itemParams := CreateBaseItemParams{
 		name: params.name,
-		kind: COMPONENT,
 		available: params.available,
 	}
-	created, err = insertBaseItem(tx, itemParams)
+	created, err = insertBaseItem(tx, COMPONENT, itemParams)
 	if err != nil {
 		return created, err
 	}
@@ -403,38 +541,41 @@ func createAssembly(db *sql.DB, params CreateAssemblyParams) (CreateAssemblyResu
 	}
 	defer tx.Rollback()
 
-	itemParams := CreateGenericItemParams{
+	itemParams := CreateBaseItemParams{
 		name: params.name,
-		kind: ASSEMBLY,
 		available: params.available,
 	}
-	item, err := insertBaseItem(tx, itemParams)
+	item, err := insertBaseItem(tx, ASSEMBLY, itemParams)
 	if err != nil {
 		return created, err
 	}
 	created.Item = item
 
+	// TODO create a item version and use it when creating the bom_lines
+	TODO_versionId := 1
+
 	for _, child := range(params.children) {
 		if child.itemId == created.id {
 			return created, errors.New("attempted to create self referencing assembly")
 		}
-		if child.ammount <= 0 {
-			return created, errors.New("assembly child must have ammount of at least 1")
+		if child.quantity <= 0 {
+			return created, errors.New("assembly child must have quantity of at least 1")
 		}
 	}
 
-	q := `insert into bom_line (assembly_item_id, child_item_id, ammount)
-	values (?, ?, ?) returning assembly_item_id, child_item_id, ammount`
+	q := `insert into bom_line (parent_version_id, child_item_id, child_version_id, quantity, position)
+	values (?, ?, ?, ?, ?)
+	returning bom_line_id, parent_version_id, child_item_id, child_version_id, quantity, position`
 	stmt, err := db.Prepare(q)
 	if err != nil {
 		return created, err
 	}
 
-	created.children = make([]BoMLine, 0, len(params.children))
-	var bomLine BoMLine
-	for _, child := range(params.children) {
-		row := stmt.QueryRow(created.id, child.itemId, child.ammount)
-		err = row.Scan(&bomLine.assemblyItemId, &bomLine.childItemId, &bomLine.ammount)
+	created.children = make([]BomLine, 0, len(params.children))
+	var bomLine BomLine
+	for i, child := range(params.children) {
+		row := stmt.QueryRow(TODO_versionId, child.itemId, child.itemVersionId, child.quantity, i)
+		err := scanBomLine(row, &bomLine)
 		if err != nil {
 			return created, err
 		}
@@ -456,6 +597,7 @@ func getAssemblyById(db *sql.DB, id int) (Item, error) {
 	return getItemByIdWithKind(db, id, ASSEMBLY)
 }
 
+// TODO refactor this whole function
 func getAssemblyTree(db *sql.DB, id int) (AssemblyNode, error) {
 	root, err := getAssemblyById(db, id)
 	if err != nil {
@@ -467,7 +609,7 @@ func getAssemblyTree(db *sql.DB, id int) (AssemblyNode, error) {
 		SELECT
 			bl.assembly_item_id,
 			bl.child_item_id,
-			bl.ammount,
+			bl.quantity,
 			1 AS depth,
 			'/' || bl.assembly_item_id || '/' || bl.child_item_id || '/' AS path
 		FROM bom_line bl
@@ -478,7 +620,7 @@ func getAssemblyTree(db *sql.DB, id int) (AssemblyNode, error) {
 		SELECT
 			bl.assembly_item_id,
 			bl.child_item_id,
-			bl.ammount,
+			bl.quantity,
 			bt.depth + 1,
 			bt.path || bl.child_item_id || '/'
 		FROM bom_line bl
@@ -489,10 +631,10 @@ func getAssemblyTree(db *sql.DB, id int) (AssemblyNode, error) {
 	SELECT
 		bt.assembly_item_id,
 		bt.child_item_id,
-		bt.ammount,
+		bt.quantity,
 		it.name,
 		it.kind,
-		it.image_id,
+		it.thumbnail_id,
 		inv.available,
 		inv.reserved
 	FROM bom_tree bt
@@ -506,18 +648,18 @@ func getAssemblyTree(db *sql.DB, id int) (AssemblyNode, error) {
 		return AssemblyNode{}, fmt.Errorf("query bom rows: %w", err)
 	}
 
-	childrenOf := make(map[int][]BoMRow)
+	childrenOf := make(map[int][]BomRow)
 	for rows.Next() {
-		var bomRow BoMRow
+		var bomRow BomRow
 		err := rows.Scan(
 			&bomRow.assemblyItemId,
 			&bomRow.childItemId,
-			&bomRow.ammount,
+			&bomRow.quantity,
 			&bomRow.name,
 			&bomRow.kind,
-			&bomRow.imageId,
-			&bomRow.available,
-			&bomRow.reserved,
+			&bomRow.thumbnailId,
+			&bomRow.inventory.available,
+			&bomRow.inventory.reserved,
 		)
 		if err != nil {
 			return AssemblyNode{}, fmt.Errorf("scan bom rows: %w", err)
@@ -528,8 +670,10 @@ func getAssemblyTree(db *sql.DB, id int) (AssemblyNode, error) {
 	return buildAssemblyRecursive(root, 0, childrenOf, make(map[int]bool)), nil
 }
 
-func buildAssemblyRecursive(item Item, ammount int, childrenOf map[int][]BoMRow, visited map[int]bool) AssemblyNode {
-	node := AssemblyNode{Item: item, ammount: ammount}
+// TODO fix this. There is a problem here because AssemblyNode has an ItemVersion,
+// but that does not have item data inside it
+func buildAssemblyRecursive(item Item, quantity float64, childrenOf map[int][]BomRow, visited map[int]bool) AssemblyNode {
+	node := AssemblyNode{ItemVersion: item, quantity: quantity}
 
 	if visited[item.id] {
 		return node
@@ -538,7 +682,7 @@ func buildAssemblyRecursive(item Item, ammount int, childrenOf map[int][]BoMRow,
 	defer delete(visited, item.id) // allow the same item in sibling branches (diamond BOMs)
 
 	for _, child := range childrenOf[item.id] {
-		node.children = append(node.children, buildAssemblyRecursive(child.Item, child.ammount, childrenOf, visited))
+		node.children = append(node.children, buildAssemblyRecursive(child.Item, child.quantity, childrenOf, visited))
 	}
 	return node
 }
