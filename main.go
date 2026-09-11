@@ -70,7 +70,7 @@ func main() {
 		item_id      integer not null references item(item_id),
 		version_code text,
 		notes        text,
-		status       text not null check (status in ('draft', 'published', 'deprecated')),
+		status       text not null default 'draft' check (status in ('draft', 'published', 'deprecated')),
 		created_at   text not null default datetime('now'),
 		published_at text,
 
@@ -258,14 +258,17 @@ const (
 	DEPRECATED BomStatus = "deprecated"
 )
 
-type Item struct {
+type BaseItem struct {
 	id          int
 	name        string
 	sku         string
 	kind        ItemKind
 	description string
 	thumbnailId *int
+}
 
+type Item struct {
+	BaseItem
 	inventory      Inventory
 	currentVersion *ItemVersion
 }
@@ -314,9 +317,7 @@ type CreateComponentParams struct {
 
 type CreateAssemblyParams struct {
 	CreateBaseItemParams
-	versionCode  string
-	versionNotes string
-	children     []CreateAssemblyChildParams
+	CreateItemVersionParams
 }
 
 type CreateAssemblyChildParams struct {
@@ -326,14 +327,16 @@ type CreateAssemblyChildParams struct {
 }
 
 type CreateAssemblyResult struct {
-	Item
-	children []BomLine
+	Item 
+	version CreateItemVersionResult
 }
 
 type AssemblyNode struct {
-	ItemVersion
-	quantity float64
-	children []AssemblyNode
+	BaseItem
+	inventory Inventory
+	version   ItemVersion
+	quantity  float64
+	children  []AssemblyNode
 }
 
 type BomRow struct {
@@ -341,6 +344,17 @@ type BomRow struct {
 	assemblyItemId int
 	childItemId int
 	quantity float64
+}
+
+type CreateItemVersionParams struct {
+	versionCode  string
+	versionNotes string
+	children     []CreateAssemblyChildParams
+}
+
+type CreateItemVersionResult struct {
+	ItemVersion
+	children []BomLine
 }
 
 func getItems(db *sql.DB) ([]Item, error) {
@@ -444,6 +458,7 @@ func insertBaseItem(tx *sql.Tx, kind ItemKind, params CreateBaseItemParams) (Ite
 		return created, err
 	}
 
+	created.currentVersion = nil
 	return created, nil
 }
 
@@ -551,36 +566,11 @@ func createAssembly(db *sql.DB, params CreateAssemblyParams) (CreateAssemblyResu
 	}
 	created.Item = item
 
-	// TODO create a item version and use it when creating the bom_lines
-	TODO_versionId := 1
-
-	for _, child := range(params.children) {
-		if child.itemId == created.id {
-			return created, errors.New("attempted to create self referencing assembly")
-		}
-		if child.quantity <= 0 {
-			return created, errors.New("assembly child must have quantity of at least 1")
-		}
-	}
-
-	q := `insert into bom_line (parent_version_id, child_item_id, child_version_id, quantity, position)
-	values (?, ?, ?, ?, ?)
-	returning bom_line_id, parent_version_id, child_item_id, child_version_id, quantity, position`
-	stmt, err := db.Prepare(q)
+	version, err := createItemVersion(tx, created.id, params.CreateItemVersionParams)
 	if err != nil {
 		return created, err
 	}
-
-	created.children = make([]BomLine, 0, len(params.children))
-	var bomLine BomLine
-	for i, child := range(params.children) {
-		row := stmt.QueryRow(TODO_versionId, child.itemId, child.itemVersionId, child.quantity, i)
-		err := scanBomLine(row, &bomLine)
-		if err != nil {
-			return created, err
-		}
-		created.children = append(created.children, bomLine)
-	}
+	created.version = version
 	
 	if err = tx.Commit(); err != nil {
 		return created, err
@@ -685,4 +675,42 @@ func buildAssemblyRecursive(item Item, quantity float64, childrenOf map[int][]Bo
 		node.children = append(node.children, buildAssemblyRecursive(child.Item, child.quantity, childrenOf, visited))
 	}
 	return node
+}
+
+func createItemVersion(tx *sql.Tx, itemId int, params CreateItemVersionParams) (CreateItemVersionResult, error) {
+	insertVersionQuery := `
+	insert into item_version (item_id, version_code, notes)
+	values (?, ?, ?)
+	returning version_id, item_id, version_code, notes, status, created_at, published_at
+	`
+	// TODO execute the query
+
+	var created CreateItemVersionResult
+	for _, child := range(params.children) {
+		if child.itemId == itemId {
+			return created, errors.New("attempted to create self referencing assembly")
+		}
+		if child.quantity <= 0 {
+			return created, errors.New("assembly child must have quantity of at least 1")
+		}
+	}
+
+	q := `insert into bom_line (parent_version_id, child_item_id, child_version_id, quantity, position)
+	values (?, ?, ?, ?, ?)
+	returning bom_line_id, parent_version_id, child_item_id, child_version_id, quantity, position`
+	stmt, err := tx.Prepare(q)
+	if err != nil {
+		return created, err
+	}
+
+	created.children = make([]BomLine, 0, len(params.children))
+	var bomLine BomLine
+	for i, child := range(params.children) {
+		row := stmt.QueryRow(TODO_versionId, child.itemId, child.itemVersionId, child.quantity, i)
+		err := scanBomLine(row, &bomLine)
+		if err != nil {
+			return created, err
+		}
+		created.children = append(created.children, bomLine)
+	}
 }
