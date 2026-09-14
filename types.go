@@ -50,61 +50,61 @@ const (
 )
 
 type BaseItem struct {
-	Id          int
-	Name        string
-	Sku         string
-	Kind        ItemKind
-	Description string
-	ThumbnailId *int
+	Id          int      `json:"id"`
+	Name        string   `json:"name"`
+	Sku         string   `json:"sku"`
+	Kind        ItemKind `json:"kind"`
+	Description string   `json:"description"`
+	ThumbnailId *int     `json:"thumbnail_id"`
 }
 
 type Item struct {
 	BaseItem
-	Inventory      Inventory
-	CurrentVersion *ItemVersion
+	Inventory      Inventory    `json:"inventory"`
+	CurrentVersion *ItemVersion `json:"current_version"`
 }
 
 type Inventory struct {
-	ItemId    int
-	Unit      UnitOfMeasurement
-	Available decimal.Decimal
-	Reserved  decimal.Decimal
+	ItemId    int               `json:"item_id"`
+	Unit      UnitOfMeasurement `json:"unit"`
+	Available decimal.Decimal   `json:"available"`
+	Reserved  decimal.Decimal   `json:"reserved"`
 }
 
 type BaseItemVersion struct {
-	Id          int
-	ItemId      int
-	VersionCode string
-	Notes       string
-	Status      BomStatus
-	CreatedAt   time.Time
-	PublishedAt *time.Time
+	Id          int        `json:"id"`
+	ItemId      int        `json:"item_id"`
+	VersionCode string     `json:"version_code"`
+	Notes       string     `json:"notes"`
+	Status      BomStatus  `json:"status"`
+	CreatedAt   time.Time  `json:"created_at"`
+	PublishedAt *time.Time `json:"published_at"`
 	// TODO consider reference images
 }
 
 type ItemVersion struct {
 	BaseItemVersion
-	Children []BomLine
+	Children []BomLine `json:"children"`
 }
 
 type BomLine struct {
-	Id              int
-	ParentVersionId int
-	ChildItemId     int
-	ChildVersionId  *int
-	Quantity        decimal.Decimal
-	Position        int
+	Id              int             `json:"id"`
+	ParentVersionId int             `json:"parent_version_id"`
+	ChildItemId     int             `json:"child_item_id"`
+	ChildVersionId  *int            `json:"child_version_id"`
+	Quantity        decimal.Decimal `json:"quantity"`
+	Position        int             `json:"position"`
 }
 
 /**
  * Params for the creation of a base item without a version
  */
 type CreateBaseItemParams struct {
-	Name        string
-	Sku         string
-	Description string
-	Unit        UnitOfMeasurement
-	Available   decimal.Decimal
+	Name        string            `json:"name"`
+	Sku         string            `json:"sku"`
+	Description string            `json:"description"`
+	Unit        UnitOfMeasurement `json:"unit"`
+	Available   decimal.Decimal   `json:"available"`
 }
 
 type CreateComponentParams struct {
@@ -117,23 +117,23 @@ type CreateAssemblyParams struct {
 }
 
 type CreateAssemblyChildParams struct {
-	ItemId        int
-	ItemVersionId *int
-	Quantity      decimal.Decimal
+	ItemId        int             `json:"item_id"`
+	ItemVersionId *int            `json:"item_version_id"`
+	Quantity      decimal.Decimal `json:"quantity"`
 }
 
 type CreateAssemblyResult struct {
-	Item 
-	Version ItemVersion
+	Item
+	Version ItemVersion `json:"version"`
 }
 
 type AssemblyNode struct {
 	BaseItem
-	Inventory Inventory
-	Version   *BaseItemVersion
-	Quantity  decimal.Decimal
-	Position  int
-	Children  []AssemblyNode
+	Inventory Inventory        `json:"inventory"`
+	Version   *BaseItemVersion `json:"version"`
+	Quantity  decimal.Decimal  `json:"quantity"`
+	Position  int              `json:"position"`
+	Children  []AssemblyNode   `json:"children"`
 }
 
 type BomRow struct {
@@ -144,8 +144,8 @@ type BomRow struct {
 }
 
 type CreateItemVersionParams struct {
-	VersionCode  string
-	VersionNotes string
-	Children     []CreateAssemblyChildParams
+	VersionCode  string                      `json:"version_code"`
+	VersionNotes string                      `json:"version_notes"`
+	Children     []CreateAssemblyChildParams `json:"children"`
 }
 

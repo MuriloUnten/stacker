@@ -61,7 +61,7 @@ func NewServer(port string, store *Store) *Server {
 	http.HandleFunc("GET /api/assemblies/{id}", makeHandler(s.getAssemblyById))
 	http.HandleFunc("POST /api/assemblies", makeHandler(s.createAssembly))
 	http.HandleFunc("GET /api/versions/{id}", makeHandler(s.getAssemblyVersionById))
-	http.HandleFunc("POST /api/versions", makeHandler(s.createAssemblyVersion))
+	http.HandleFunc("POST /api/assemblies/{id}/versions", makeHandler(s.createAssemblyVersion))
 	http.HandleFunc("GET /api/assemblies/{id}/versions", makeHandler(s.getAssemblyVersions))
 
 	return s
@@ -74,7 +74,17 @@ func (s *Server) Run() {
 }
 
 func (s *Server) getComponentById(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	id, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	result, err := getComponentById(s.store.db, id)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) getComponents(w http.ResponseWriter, r *http.Request) error {
@@ -86,7 +96,18 @@ func (s *Server) getComponents(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) createComponent(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	var req CreateComponentParams
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		return BadRequest()
+	}
+
+	result, err := createComponent(s.store.db, req)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) getAssemblyById(w http.ResponseWriter, r *http.Request) error {
@@ -113,11 +134,38 @@ func (s *Server) getAssemblies(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) createAssembly(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	var req CreateAssemblyParams
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		return BadRequest()
+	}
+
+	result, err := createAssembly(s.store.db, req)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) createAssemblyVersion(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	itemId, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	var req CreateItemVersionParams
+	err = json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		return BadRequest()
+	}
+
+	itemVersion, err := createItemVersionWrapper(s.store.db, itemId, req)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, itemVersion)
 }
 
 func (s *Server) getAssemblyVersionById(w http.ResponseWriter, r *http.Request) error {

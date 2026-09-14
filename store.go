@@ -558,6 +558,23 @@ func createItemVersion(tx *sql.Tx, itemId int, params CreateItemVersionParams) (
 	return created, nil
 }
 
+func createItemVersionWrapper(db *sql.DB, itemId int, params CreateItemVersionParams) (ItemVersion, error) {
+	var iv ItemVersion
+	tx, err := db.Begin()
+	if err != nil {
+		return iv, err
+	}
+	defer tx.Rollback()
+
+	iv, err = createItemVersion(tx, itemId, params)
+	if err != nil {
+		return iv, err
+	}
+
+	err = tx.Commit()
+	return iv, err
+}
+
 func getItemVersionById(db *sql.DB, versionId int) (ItemVersion, error) {
 	var v ItemVersion
 	var baseItemVersion BaseItemVersion
