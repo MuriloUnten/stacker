@@ -80,6 +80,158 @@ func TestCreateItemWithNegativeAvailable(t *testing.T) {
 	}
 }
 
-func TestCreateItemRecursive(t *testing.T) {
-	// TODO implement
+func TestCreateAssembly(t *testing.T) {
+	s := testStoreInit(t)
+
+	var params CreateComponentParams
+	params.Name = "bolt"
+	params.Sku = "1234"
+	params.Description = "its just a bolt"
+	params.Unit = EACH
+	params.Available = decimal.NewFromInt(100)
+	component, err := createComponent(s.db, params)
+	if err != nil {
+		t.Errorf("failed to create fine component: %s", err.Error())
+	}
+	boltId := component.Id
+
+	params.Name = "Tire"
+	params.Sku = "110324"
+	params.Description = "Pirelli tire"
+	params.Unit = EACH
+	params.Available = decimal.NewFromInt(20)
+	component, err = createComponent(s.db, params)
+	if err != nil {
+		t.Errorf("failed to create fine component: %s", err.Error())
+	}
+	tireId := component.Id
+
+	var wheelParams CreateAssemblyParams
+	wheelParams.Name = "Wheel"
+	wheelParams.Sku  = "1010"
+	wheelParams.Description = "17 inch wheel"
+	wheelParams.Unit = EACH
+	wheelParams.Available = decimal.NewFromInt(0)
+	wheelParams.VersionCode = "1.0"
+	wheelParams.VersionNotes = ""
+	wheelParams.Children = []CreateAssemblyChildParams{
+		{
+			ItemId: tireId,
+			ItemVersionId: nil,
+			Quantity: decimal.NewFromInt(1),
+		},
+		{
+			ItemId: boltId,
+			ItemVersionId: nil,
+			Quantity: decimal.NewFromInt(4),
+		},
+	}
+
+	wheelResult, err := createAssembly(s.db, wheelParams)
+	if err != nil {
+		t.Errorf("failed to create fine assembly: %s", err.Error())
+	}
+
+	var carParams CreateAssemblyParams
+	carParams.Name = "Car"
+	carParams.Sku  = "1111"
+	carParams.Description = "Random ass car"
+	carParams.Unit = EACH
+	carParams.Available = decimal.NewFromInt(0)
+	carParams.VersionCode = "1.0"
+	carParams.VersionNotes = ""
+	carParams.Children = []CreateAssemblyChildParams{
+		{
+			ItemId: wheelResult.Id,
+			ItemVersionId: &wheelResult.Version.Id,
+			Quantity: decimal.NewFromInt(4),
+		},
+	}
+	carResult, err := createAssembly(s.db, carParams)
+	if err != nil {
+		t.Errorf("failed to create fine assembly: %s", err.Error())
+	}
+
+	_, err = getBom(s.db, carResult.Version.Id)
+	if err != nil {
+		t.Errorf("failed to read fine BOM: %s", err.Error())
+	}
+}
+
+func TestCreateAssemblyRecursive(t *testing.T) {
+	s := testStoreInit(t)
+
+	var params CreateComponentParams
+	params.Name = "bolt"
+	params.Sku = "1234"
+	params.Description = "its just a bolt"
+	params.Unit = EACH
+	params.Available = decimal.NewFromInt(100)
+	component, err := createComponent(s.db, params)
+	if err != nil {
+		t.Errorf("failed to create fine component: %s", err.Error())
+	}
+	boltId := component.Id
+
+	params.Name = "Tire"
+	params.Sku = "110324"
+	params.Description = "Pirelli tire"
+	params.Unit = EACH
+	params.Available = decimal.NewFromInt(20)
+	component, err = createComponent(s.db, params)
+	if err != nil {
+		t.Errorf("failed to create fine component: %s", err.Error())
+	}
+	tireId := component.Id
+
+	var wheelParams CreateAssemblyParams
+	wheelParams.Name = "Wheel"
+	wheelParams.Sku  = "1010"
+	wheelParams.Description = "17 inch wheel"
+	wheelParams.Unit = EACH
+	wheelParams.Available = decimal.NewFromInt(0)
+	wheelParams.VersionCode = "1.0"
+	wheelParams.VersionNotes = ""
+	wheelParams.Children = []CreateAssemblyChildParams{
+		{
+			ItemId: tireId,
+			ItemVersionId: nil,
+			Quantity: decimal.NewFromInt(1),
+		},
+		{
+			ItemId: boltId,
+			ItemVersionId: nil,
+			Quantity: decimal.NewFromInt(4),
+		},
+	}
+
+	wheelResult, err := createAssembly(s.db, wheelParams)
+	if err != nil {
+		t.Errorf("failed to create fine assembly: %s", err.Error())
+	}
+
+	var carParams CreateAssemblyParams
+	carParams.Name = "Car"
+	carParams.Sku  = "1111"
+	carParams.Description = "Random ass car"
+	carParams.Unit = EACH
+	carParams.Available = decimal.NewFromInt(0)
+	carParams.VersionCode = "1.0"
+	carParams.VersionNotes = ""
+	carParams.Children = []CreateAssemblyChildParams{
+		{
+			ItemId: wheelResult.Id,
+			ItemVersionId: &wheelResult.Version.Id,
+			Quantity: decimal.NewFromInt(4),
+		},
+	}
+	carResult, err := createAssembly(s.db, carParams)
+	if err != nil {
+		t.Errorf("failed to create fine assembly: %s", err.Error())
+	}
+
+	_, err = getBom(s.db, carResult.Version.Id)
+	if err != nil {
+		t.Errorf("failed to read fine BOM: %s", err.Error())
+	}
 }
