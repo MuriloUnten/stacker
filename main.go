@@ -8,6 +8,7 @@ import (
  * - [ ] implement endpoints for /items/{id}/versions
  * - [x] use decimal types instead of decimal.Decimal's (https://github.com/shopspring/decimal)
  * - [x] Position in bom_line
+ * - [ ] think about refactoring images to use a url (that would allow for later refactor to cdn)
  * - [ ] Treat possible active version on item related functions
  * - [x] Implement Store
  * - [ ] Prepare all statements beforehand
