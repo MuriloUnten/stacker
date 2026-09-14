@@ -639,3 +639,141 @@ func getBaseItemVersion(db *sql.DB, versionId int) (BaseItemVersion, error) {
 
 	return v, nil
 }
+
+func publishVersion(db *sql.DB, versionId int) error {
+	iv, err := getItemVersionById(db, versionId)
+	if err != nil {
+		return err
+	}
+
+	if iv.Status != DRAFT {
+		return errors.New("can't publish non draft version")
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	versionQuery := `
+	update item_version set status = 'published'
+	where version_id = ?
+	returning item_id
+	`
+	itemQuery := `
+	update item set current_version_id = ?
+	where item_id = ?
+	`
+
+	versionStmt, err := tx.Prepare(versionQuery)
+	if err != nil {
+		return err
+	}
+	itemStmt, err := tx.Prepare(itemQuery)
+	if err != nil {
+		return err
+	}
+
+	row := versionStmt.QueryRow(versionId)
+	var itemId int
+	err = row.Scan(&itemId)
+	if err != nil {
+		return err
+	}
+
+	result, err := itemStmt.Exec(versionId, itemId)
+	if err != nil {
+		return err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if affected == 0 {
+		return errors.New("no rows affected")
+	}
+
+	return tx.Commit()
+}
+
+func deprecateVersion(db *sql.DB, versionId int) error {
+	iv, err := getItemVersionById(db, versionId)
+	if err != nil {
+		return err
+	}
+
+	if iv.Status != PUBLISHED {
+		return errors.New("can't deprecate non published version")
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	versionQuery := `
+	update item_version set status = 'deprecated'
+	where version_id = ?
+	returning item_id
+	`
+	publishedItemVersionsQuery := `
+	select version_id from item_version
+	where item_id = ? and status = 'published'
+	order by published_at desc limit 1
+	`
+	itemQuery := `
+	update item set current_version_id = ?
+	where item_id = ?
+	`
+
+	versionStmt, err := tx.Prepare(versionQuery)
+	if err != nil {
+		return err
+	}
+	publishedVersions, err := tx.Prepare(publishedItemVersionsQuery)
+	if err != nil {
+		return err
+	}
+	itemStmt, err := tx.Prepare(itemQuery)
+	if err != nil {
+		return err
+	}
+
+	row := versionStmt.QueryRow(versionId)
+	var itemId int
+	err = row.Scan(&itemId)
+	if err != nil {
+		return err
+	}
+
+	row = publishedVersions.QueryRow(itemId)
+	var newPublishedVersionId *int
+	err = row.Scan(newPublishedVersionId)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			newPublishedVersionId = nil
+		} else {
+			return err
+		}
+	}
+
+	result, err := itemStmt.Exec(newPublishedVersionId, itemId)
+	if err != nil {
+		return err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if affected == 0 {
+		return errors.New("no rows affected")
+	}
+
+	return tx.Commit()
+}

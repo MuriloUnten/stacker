@@ -57,12 +57,17 @@ func NewServer(port string, store *Store) *Server {
 	http.HandleFunc("GET /api/components", makeHandler(s.getComponents))
 	http.HandleFunc("GET /api/components/{id}", makeHandler(s.getComponentById))
 	http.HandleFunc("POST /api/components", makeHandler(s.createComponent))
+
 	http.HandleFunc("GET /api/assemblies", makeHandler(s.getAssemblies))
 	http.HandleFunc("GET /api/assemblies/{id}", makeHandler(s.getAssemblyById))
 	http.HandleFunc("POST /api/assemblies", makeHandler(s.createAssembly))
-	http.HandleFunc("GET /api/versions/{id}", makeHandler(s.getAssemblyVersionById))
 	http.HandleFunc("POST /api/assemblies/{id}/versions", makeHandler(s.createAssemblyVersion))
 	http.HandleFunc("GET /api/assemblies/{id}/versions", makeHandler(s.getAssemblyVersions))
+
+	http.HandleFunc("GET /api/versions/{id}", makeHandler(s.getAssemblyVersionById))
+	http.HandleFunc("GET /api/versions/{id}/bom", makeHandler(s.getBillOfMaterials))
+	http.HandleFunc("POST /api/versions/{id}/publish", makeHandler(s.publishVersion))
+	http.HandleFunc("POST /api/versions/{id}/deprecate", makeHandler(s.deprecateVersion))
 
 	return s
 }
@@ -184,4 +189,46 @@ func (s *Server) getAssemblyVersionById(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) getAssemblyVersions(w http.ResponseWriter, r *http.Request) error {
 	return NotImplemented()
+}
+
+func (s *Server) getBillOfMaterials(w http.ResponseWriter, r *http.Request) error {
+	versionId, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	bom, err := getBom(s.store.db, versionId)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, bom)
+}
+
+func (s *Server) publishVersion(w http.ResponseWriter, r *http.Request) error {
+	versionId, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	err = publishVersion(s.store.db, versionId)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, nil)
+}
+
+func (s *Server) deprecateVersion(w http.ResponseWriter, r *http.Request) error {
+	versionId, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	err = publishVersion(s.store.db, versionId)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, nil)
 }
