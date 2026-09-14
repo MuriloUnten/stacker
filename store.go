@@ -569,8 +569,8 @@ func getItemVersionById(db *sql.DB, versionId int) (ItemVersion, error) {
 
 	q := `
 	select bom_line_id, parent_version_id, child_item_id, child_version_id, quantity, position from bom_line
-	order by position asc
 	where parent_version_id = ?
+	order by position asc
 	`
 	stmt, err := db.Prepare(q)
 	if err != nil {
