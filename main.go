@@ -19,16 +19,16 @@ import (
  * - [ ] Implement connection pool
  * - [ ] Add better errors
  * - [ ] think about having timestamps in more things
- * - [ ] Write testing framework
- * - [ ] Add Tests
- * - [ ] Consider using sqlc
+ * - [x] Write testing framework
+ * - [/] Add Tests
+ * - [x] Consider using sqlc
  * - [ ] Study and think about context and timeouts
  * - [ ] Add more fields to image table (mime_type, width, height, etc)
  * - [ ] Add optional image input to item creation functions
  * - [ ] Think about how to implement a tracker scanner goroutine
  * - [ ] Implement manufacture orders
- * - [ ] Think about manufacture orders having another state maybe called refurbished or something that restores inventory
- * - [ ] Rewatch the McMaster-Carr video (https://www.youtube.com/watch?v=-Ln-8QM8KhQ)
+ * - [x] Think about manufacture orders having another state maybe called refurbished or something that restores inventory
+ * - [x] Rewatch the McMaster-Carr video (https://www.youtube.com/watch?v=-Ln-8QM8KhQ)
  */
 func main() {
 	store := StoreInit("db/database.db")
