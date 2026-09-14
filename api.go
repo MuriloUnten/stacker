@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
+	"strconv"
 )
 
 type Server struct {
@@ -28,6 +30,16 @@ func makeHandler(handler APIFunc) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+func getPathId(wildcard string, r *http.Request) (int, error) {
+	v := r.PathValue(wildcard)
+	if v == "" {
+		return 0, errors.New("unable to get path id")
+	}
+
+	id, err := strconv.Atoi(v)
+	return id, err
 }
 
 func writeJSON(w http.ResponseWriter, status int, data any) error {
@@ -66,7 +78,11 @@ func (s *Server) getComponentById(w http.ResponseWriter, r *http.Request) error 
 }
 
 func (s *Server) getComponents(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	items, err := getComponents(s.store.db)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, items)
 }
 
 func (s *Server) createComponent(w http.ResponseWriter, r *http.Request) error {
@@ -74,11 +90,26 @@ func (s *Server) createComponent(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) getAssemblyById(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	id, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	asm, err := getAssemblyById(s.store.db, id)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, asm)
 }
 
 func (s *Server) getAssemblies(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	assemblies, err := getAssemblies(s.store.db)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, assemblies)
 }
 
 func (s *Server) createAssembly(w http.ResponseWriter, r *http.Request) error {
@@ -90,7 +121,17 @@ func (s *Server) createAssemblyVersion(w http.ResponseWriter, r *http.Request) e
 }
 
 func (s *Server) getAssemblyVersionById(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	versionId, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	version, err := getItemVersionById(s.store.db, versionId)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, version)
 }
 
 func (s *Server) getAssemblyVersions(w http.ResponseWriter, r *http.Request) error {
