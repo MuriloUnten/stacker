@@ -14,6 +14,7 @@ var embedMigrations embed.FS
 
 const (
 	migrationsPath = "db/migrations"
+	sqliteOptions  = "?_journal_mode=WAL&_foreign_keys=on"
 )
 
 type Store struct {
@@ -21,7 +22,7 @@ type Store struct {
 }
 
 func StoreInit(path string) *Store {
-	db, err := Connect("file:" + path + "?_journal_mode=WAL&_foreign_keys=on")
+	db, err := Connect("file:" + path + sqliteOptions)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -40,6 +41,9 @@ func Connect(dataSourceName string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// TODO figure out better way of disabling logging only for testing purposes
+	goose.SetLogger(goose.NopLogger())
 
 	goose.SetBaseFS(embedMigrations)
 
