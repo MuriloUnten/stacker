@@ -31,6 +31,85 @@ func seedComponentFixture(t *testing.T, s *Store, name string) Item {
 	return component
 }
 
+func seedAssemblyFixture(t *testing.T, s *Store, name string) CreateAssemblyResult {
+	t.Helper()
+
+	c1 := seedComponentFixture(t, s, "wqjdfjad")
+	c2 := seedComponentFixture(t, s, "asdfsdfj")
+
+	var params CreateAssemblyParams
+	params.Name = name
+	params.Sku  = name
+	params.Description = name
+	params.Unit = EACH
+	params.Available = decimal.NewFromInt(10)
+	params.VersionCode = name
+	params.VersionNotes = name
+	params.Children = []CreateAssemblyChildParams{
+		{
+			ItemId: c1.Id,
+			ItemVersionId: nil,
+			Quantity: decimal.NewFromInt(1),
+		},
+		{
+			ItemId: c2.Id,
+			ItemVersionId: nil,
+			Quantity: decimal.NewFromInt(4),
+		},
+	}
+
+	asm, err := createAssembly(s.db, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return asm
+}
+
+func TestGetComponents(t *testing.T) {
+	s := testStoreInit(t)
+	seedComponentFixture(t, s, "component 1")
+	seedComponentFixture(t, s, "component 2")
+	seedComponentFixture(t, s, "component 3")
+	_, err := getComponents(s.db)
+	if err != nil {
+		t.Errorf("failed to get components")
+	}
+}
+
+func TestGetItems(t *testing.T) {
+	s := testStoreInit(t)
+	seedComponentFixture(t, s, "component 1")
+	seedComponentFixture(t, s, "component 2")
+	seedComponentFixture(t, s, "component 3")
+	seedAssemblyFixture(t, s, "assembly")
+
+	_, err := getItems(s.db)
+	if err != nil {
+		t.Errorf("failed to get items")
+	}
+}
+
+func TestGetAssemblies(t *testing.T) {
+	s := testStoreInit(t)
+	seedAssemblyFixture(t, s, "assembly")
+
+	_, err := getAssemblies(s.db)
+	if err != nil {
+		t.Errorf("failed to get assemblies")
+	}
+}
+
+func TestGetAssemblyVersions(t *testing.T) {
+	s := testStoreInit(t)
+	asm := seedAssemblyFixture(t, s, "assembly")
+
+	_, err := getItemVersionsByItem(s.db, asm.Id)
+	if err != nil {
+		t.Errorf("failed to get assembly versions")
+	}
+}
+
 func TestCreateComponent(t *testing.T) {
 	s := testStoreInit(t)
 	db := s.db
