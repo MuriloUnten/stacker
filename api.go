@@ -188,7 +188,17 @@ func (s *Server) getAssemblyVersionById(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) getAssemblyVersions(w http.ResponseWriter, r *http.Request) error {
-	return NotImplemented()
+	itemId, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	versions, err := getItemVersionsByItem(s.store.db, itemId)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, versions)
 }
 
 func (s *Server) getBillOfMaterials(w http.ResponseWriter, r *http.Request) error {

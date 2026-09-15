@@ -510,10 +510,6 @@ func getBom(db *sql.DB, versionId int) (AssemblyNode, error) {
 				ThumbnailId: thumbnailId,
 			},
 		}
-		// if currentVersionId.Valid {
-		// 	id := int(currentVersionId.Int64)
-		// 	node.item.currentVersionId = &id
-		// }
 		node.Inventory = Inventory{
 			ItemId:    childItemId,
 			Unit:      uom,
@@ -675,14 +671,33 @@ func getItemVersionById(db *sql.DB, versionId int) (ItemVersion, error) {
 	return v, nil
 }
 
-// TODO implement
-func getItemVersionsByItem(tx *sql.DB, itemId int) ([]ItemVersion, error) {
-	// versionQuery := `
-	// select version_id, item_id, version_code, notes, status, created_at, published_at from item_version v 
-	// where v.item_id = ?
-	// order by created_at desc
-	// `
-	return nil, fmt.Errorf("not implemented")
+func getItemVersionsByItem(db *sql.DB, itemId int) ([]BaseItemVersion, error) {
+	q := `
+	select version_id, item_id, version_code, notes, status, created_at, published_at
+	from item_version v where v.item_id = ?
+	order by created_at desc
+	`
+
+	stmt, err := db.Prepare(q)
+	if err != nil {
+		return []BaseItemVersion{}, err
+	}
+	rows, err := stmt.Query(itemId)
+	if err != nil {
+		return []BaseItemVersion{}, err
+	}
+
+	versions := make([]BaseItemVersion, 0, 10)
+	for rows.Next() {
+		var iv BaseItemVersion
+		err := scanItemVersion(rows, &iv)
+		if err != nil {
+			return versions, err
+		}
+		versions = append(versions, iv)
+	}
+
+	return versions, nil
 }
 
 func getBaseItemVersion(db *sql.DB, versionId int) (BaseItemVersion, error) {
