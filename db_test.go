@@ -14,6 +14,23 @@ func testStoreInit(t *testing.T) *Store {
 	return store
 }
 
+func seedComponentFixture(t *testing.T, s *Store, name string) Item {
+	t.Helper()
+
+	var params CreateComponentParams
+	params.Name = name
+	params.Sku = name
+	params.Description = name
+	params.Unit = EACH
+	params.Available = decimal.NewFromInt(100)
+	component, err := createComponent(s.db, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return component
+}
+
 func TestCreateComponent(t *testing.T) {
 	s := testStoreInit(t)
 	db := s.db
@@ -77,6 +94,23 @@ func TestCreateItemWithNegativeAvailable(t *testing.T) {
 	_, err := createComponent(db, params)
 	if err == nil {
 		t.Errorf("created item with negative available stock")
+	}
+}
+
+func TestCreateItemWithUomEachAndNonIntAvailable(t *testing.T) {
+	s := testStoreInit(t)
+	db := s.db
+
+	var params CreateComponentParams
+	params.Name = "bolt"
+	params.Sku  = "1298"
+	params.Description = "a bolt"
+	params.Unit = EACH
+	params.Available = decimal.NewFromFloat(10.5)
+
+	_, err := createComponent(db, params)
+	if err == nil {
+		t.Errorf("should not be able to create item with uom EACH and non integer available stock")
 	}
 }
 
@@ -158,7 +192,7 @@ func TestCreateAssembly(t *testing.T) {
 	}
 }
 
-func TestCreateAssemblyRecursive(t *testing.T) {
+func TestCreateRecursiveItemVersion(t *testing.T) {
 	s := testStoreInit(t)
 
 	var params CreateComponentParams
@@ -233,5 +267,28 @@ func TestCreateAssemblyRecursive(t *testing.T) {
 	_, err = getBom(s.db, carResult.Version.Id)
 	if err != nil {
 		t.Errorf("failed to read fine BOM: %s", err.Error())
+	}
+}
+
+func TestAttemptComponentVersion(t *testing.T) {
+	s := testStoreInit(t)
+
+	component := seedComponentFixture(t, s, "bolt")
+	child     := seedComponentFixture(t, s, "child component")
+
+	var params CreateItemVersionParams
+	params.VersionCode = "1.0"
+	params.VersionNotes = "first revision"
+	params.Children = []CreateAssemblyChildParams{
+		{
+			ItemId: child.Id,
+			ItemVersionId: nil,
+			Quantity: decimal.NewFromInt(10),
+		},
+	}
+
+	_, err :=createItemVersionWrapper(s.db, component.Id, params)
+	if err == nil {
+		t.Errorf("should not be able to create version for component")
 	}
 }

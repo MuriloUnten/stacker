@@ -5,6 +5,7 @@ import (
 
 /**
  * TODO
+ * - [ ] make sure recursive bom's are impossible and update tests for that
  * - [ ] implement endpoints for /items/{id}/versions
  * - [x] use decimal types instead of decimal.Decimal's (https://github.com/shopspring/decimal)
  * - [x] Position in bom_line

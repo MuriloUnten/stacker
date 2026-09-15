@@ -122,6 +122,10 @@ func getItemByIdWithKind(db *sql.DB, id int, kind ItemKind) (Item, error) {
 func insertBaseItem(tx *sql.Tx, kind ItemKind, params CreateBaseItemParams) (Item, error) {
 	created  := Item{}
 
+	if params.Unit == EACH && !params.Available.IsInteger() {
+		return created, errors.New("item with kind EACH cannot have non integer available stock")
+	}
+
 	insertItem := `
 	insert into item (name, sku, kind, description)
 	values (?, ?, ?, ?) returning item_id, name, sku, kind, description, thumbnail_id
@@ -521,6 +525,7 @@ func createItemVersion(tx *sql.Tx, itemId int, params CreateItemVersionParams) (
 
 	// TODO fetch all items from params.children && verify that they are what they are supposed to be
 	// and that the given versions are proper published versions
+	// TODO check if the quantity is integer in case of uom = EACH
 	for _, child := range(params.Children) {
 		if child.ItemId == itemId {
 			return created, errors.New("attempted to create self referencing assembly")
