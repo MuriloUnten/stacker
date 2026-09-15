@@ -5,6 +5,7 @@ import (
 
 /**
  * TODO
+ * - [ ] implement getter for all versions of an assembly
  * - [ ] make sure recursive bom's are impossible and update tests for that
  * - [ ] implement endpoints for /items/{id}/versions
  * - [x] use decimal types instead of decimal.Decimal's (https://github.com/shopspring/decimal)
@@ -15,9 +16,9 @@ import (
  * - [ ] Prepare all statements beforehand
  * - [ ] Read about prepared statements in transactions
  * - [x] Enable write ahead logging (WAL)
- * - [/] Think about assembly versioning and implement it
- * - [/] Implement recursive read of BoM tree
- * - [/] Implement migration system
+ * - [x] Think about assembly versioning and implement it
+ * - [x] Implement recursive read of BoM tree
+ * - [x] Implement migration system
  * - [ ] Implement connection pool
  * - [ ] Add better errors
  * - [ ] think about having timestamps in more things

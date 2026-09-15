@@ -61,7 +61,7 @@ type BaseItem struct {
 type Item struct {
 	BaseItem
 	Inventory      Inventory    `json:"inventory"`
-	CurrentVersion *ItemVersion `json:"current_version"`
+	CurrentVersion *BaseItemVersion `json:"current_version"`
 }
 
 type Inventory struct {

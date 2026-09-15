@@ -65,8 +65,10 @@ func Connect(dataSourceName string) (*sql.DB, error) {
 func getItems(db *sql.DB) ([]Item, error) {
 	q := `
 	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id,
-	inv.uom, inv.available, inv.reserved
+	inv.uom, inv.available, inv.reserved,
+	iv.version_id, iv.version_code, iv.notes, iv.status, iv.created_at, iv.published_at
 	from item it join inventory inv on it.item_id = inv.item_id
+	left join item_version iv on it.current_version_id = iv.version_id
 	`
 	rows, err := db.Query(q)
 	if err != nil {
@@ -80,8 +82,10 @@ func getItems(db *sql.DB) ([]Item, error) {
 func getItemById(db *sql.DB, id int) (Item, error) {
 	q := `
 	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id,
-	inv.uom, inv.available, inv.reserved
+	inv.uom, inv.available, inv.reserved,
+	iv.version_id, iv.version_code, iv.notes, iv.status, iv.created_at, iv.published_at
 	from item it join inventory inv on it.item_id = inv.item_id
+	left join item_version iv on it.current_version_id = iv.version_id
 	where it.item_id = ?`
 
 	row := db.QueryRow(q, id)
@@ -93,8 +97,10 @@ func getItemById(db *sql.DB, id int) (Item, error) {
 func getItemsWithKind(db *sql.DB, kind ItemKind) ([]Item, error) {
 	q := `
 	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id,
-	inv.uom, inv.available, inv.reserved
+	inv.uom, inv.available, inv.reserved,
+	iv.version_id, iv.version_code, iv.notes, iv.status, iv.created_at, iv.published_at
 	from item it join inventory inv on it.item_id = inv.item_id
+	left join item_version iv on it.current_version_id = iv.version_id
 	where it.kind = ?
 	`
 	rows, err := db.Query(q, kind.String())
@@ -108,8 +114,11 @@ func getItemsWithKind(db *sql.DB, kind ItemKind) ([]Item, error) {
 
 func getItemByIdWithKind(db *sql.DB, id int, kind ItemKind) (Item, error) {
 	q := `
-	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id, inv.uom, inv.available, inv.reserved
+	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id,
+	inv.uom, inv.available, inv.reserved,
+	iv.version_id, iv.version_code, iv.notes, iv.status, iv.created_at, iv.published_at
 	from item it join inventory inv on it.item_id = inv.item_id
+	left join item_version iv on it.current_version_id = iv.version_id
 	where it.item_id = ? and it.kind = ?
 	`
 
@@ -181,6 +190,15 @@ type RowScanner interface {
 }
 
 func scanItem(scanner RowScanner, item *Item) error {
+	var (
+		versionId   sql.NullInt64
+		versionCode sql.NullString
+		notes       sql.NullString
+		status      sql.NullString
+		createdAt   sql.NullString
+		publishedAt sql.NullString
+	)
+
 	err := scanner.Scan(
 		&item.Id,
 		&item.Name,
@@ -190,8 +208,48 @@ func scanItem(scanner RowScanner, item *Item) error {
 		&item.Inventory.Unit,
 		&item.Inventory.Available,
 		&item.Inventory.Reserved,
+		&versionId,
+		&versionCode,
+		&notes,
+		&status,
+		&createdAt,
+		&publishedAt,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	if !versionId.Valid {
+		item.CurrentVersion = nil
+		return nil
+	}
+
+	// if version_id field is not null,
+	// then all other version fields must not be null
+	if !versionCode.Valid || !notes.Valid || !status.Valid || !createdAt.Valid || !publishedAt.Valid {
+		return errors.New("inconsistent state: there is a version_id, but other fields are missing")
+	}
+
+	createdAtTime, err := time.Parse("2006-01-02 15:04:05", createdAt.String)
+	if err != nil {
+		return err
+	}
+	publishedAtTime, err := time.Parse("2006-01-02 15:04:05", publishedAt.String)
+	if err != nil {
+		return err
+	}
+
+	item.CurrentVersion = &BaseItemVersion{
+		Id: int(versionId.Int64),
+		ItemId: item.Id,
+		VersionCode: versionCode.String,
+		Notes: notes.String,
+		Status: BomStatus(status.String),
+		CreatedAt: createdAtTime,
+		PublishedAt: &publishedAtTime,
+	}
+
+	return nil
 }
 
 func scanItems(rows *sql.Rows, items []Item) ([]Item, error) {
@@ -245,10 +303,11 @@ func scanItemVersion(scanner RowScanner, iv *BaseItemVersion) error {
 		return err
 	}
 	if publishedAt.Valid {
-		*iv.PublishedAt, err = time.Parse("2006-01-02 15:04:05", publishedAt.String)
+		publishedAtTime, err := time.Parse("2006-01-02 15:04:05", publishedAt.String)
 		if err != nil {
 			return err
 		}
+		iv.PublishedAt = &publishedAtTime
 	}
 
 	return nil
