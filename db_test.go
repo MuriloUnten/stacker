@@ -324,7 +324,7 @@ func TestAttemptAssemblyUsingUnpublishedVersion(t *testing.T) {
 	}
 }
 
-func TestCreateRecursiveItemVersion(t *testing.T) {
+func TestCreateAssemblyOfAssembly(t *testing.T) {
 	s := testStoreInit(t)
 
 	var params CreateComponentParams
@@ -374,6 +374,11 @@ func TestCreateRecursiveItemVersion(t *testing.T) {
 	wheelResult, err := createAssembly(s.db, wheelParams)
 	if err != nil {
 		t.Errorf("failed to create fine assembly: %s", err.Error())
+	}
+
+	err = publishVersion(s.db, wheelResult.Version.Id)
+	if err != nil {
+		t.Errorf("failed to publish fine assembly: %s", err.Error())
 	}
 
 	var carParams CreateAssemblyParams

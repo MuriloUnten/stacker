@@ -1,16 +1,18 @@
 package main
 
 import (
+	"strings"
 	"database/sql"
-	"log"
 	"embed"
 	"errors"
 	"fmt"
+	"log"
+	"slices"
 	"time"
 
-	"github.com/shopspring/decimal"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pressly/goose/v3"
+	"github.com/shopspring/decimal"
 )
 
 //go:embed db/migrations/*.sql
@@ -75,8 +77,7 @@ func getItems(db *sql.DB) ([]Item, error) {
 		return nil, err
 	}
 
-	items := make([]Item, 0, 10)
-	return scanItems(rows, items)
+	return scanItems(rows, 10)
 }
 
 func getItemById(db *sql.DB, id int) (Item, error) {
@@ -108,8 +109,7 @@ func getItemsWithKind(db *sql.DB, kind ItemKind) ([]Item, error) {
 		return nil, err
 	}
 
-	items := make([]Item, 0, 10)
-	return scanItems(rows, items)
+	return scanItems(rows, 10)
 }
 
 func getItemByIdWithKind(db *sql.DB, id int, kind ItemKind) (Item, error) {
@@ -126,6 +126,42 @@ func getItemByIdWithKind(db *sql.DB, id int, kind ItemKind) (Item, error) {
 	var item Item
 	err := scanItem(row, &item)
 	return item, err
+}
+
+func getItemsByIdList(tx *sql.Tx, itemIds []int) ([]Item, error) {
+	if len(itemIds) == 0 {
+		return []Item{}, nil
+	}
+
+	q := `
+	select it.item_id, it.name, it.sku, it.kind, it.thumbnail_id,
+	inv.uom, inv.available, inv.reserved,
+	iv.version_id, iv.version_code, iv.notes, iv.status, iv.created_at, iv.published_at
+	from item it join inventory inv on it.item_id = inv.item_id
+	left join item_version iv on it.current_version_id = iv.version_id
+	where it.item_id in (%s)
+	`
+
+	args := make([]any, 0, len(itemIds))
+	args = append(args, itemIds[0])
+	var placeholders strings.Builder
+	placeholders.WriteString("?")
+	for i := 1; i < len(itemIds); i++ {
+		placeholders.WriteString(", ?")
+		args = append(args, itemIds[i])
+	}
+	itemsSelect := fmt.Sprintf(q, placeholders.String())
+
+	itemsStmt, err := tx.Prepare(itemsSelect)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := itemsStmt.Query(args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return scanItems(rows, len(itemIds))
 }
 
 func insertBaseItem(tx *sql.Tx, kind ItemKind, params CreateBaseItemParams) (Item, error) {
@@ -252,10 +288,10 @@ func scanItem(scanner RowScanner, item *Item) error {
 	return nil
 }
 
-func scanItems(rows *sql.Rows, items []Item) ([]Item, error) {
-	if items == nil {
-		return nil, errors.New("must give pre-allocated slice")
-	}
+func scanItems(rows *sql.Rows, initialCapacity int) ([]Item, error) {
+	capacity := max(initialCapacity, 5)
+	items := make([]Item, 0, capacity)
+
 	var item Item
 	for rows.Next() {
 		err := scanItem(rows, &item)
@@ -311,6 +347,24 @@ func scanItemVersion(scanner RowScanner, iv *BaseItemVersion) error {
 	}
 
 	return nil
+}
+
+func scanItemVersions(rows *sql.Rows, initialCapacity int) ([]BaseItemVersion, error) {
+	capacity := max(initialCapacity, 5)
+	versions := make([]BaseItemVersion, 0, capacity)
+
+	var version BaseItemVersion
+	for rows.Next() {
+		err := scanItemVersion(rows, &version)
+		if err != nil {
+			return versions, err
+		}
+		versions = append(versions, version)
+	}
+	if err := rows.Err(); err != nil {
+		return versions, err
+	}
+	return versions, nil
 }
 
 func createComponent(db *sql.DB, params CreateComponentParams) (Item, error) {
@@ -578,16 +632,9 @@ func createItemVersion(tx *sql.Tx, itemId int, params CreateItemVersionParams) (
 		return created, err
 	}
 
-	// TODO fetch all items from params.children && verify that they are what they are supposed to be
-	// and that the given versions are proper published versions
-	// TODO check if the quantity is integer in case of uom = EACH
-	for _, child := range(params.Children) {
-		if child.ItemId == itemId {
-			return created, errors.New("attempted to create self referencing assembly")
-		}
-		if child.Quantity.LessThanOrEqual(decimal.NewFromInt(0)) {
-			return created, errors.New("assembly child must have quantity greater than zero")
-		}
+	err = validateAssemblyChildren(tx, params.Children, itemId)
+	if err != nil {
+		return created, err
 	}
 
 	q := `insert into bom_line (parent_version_id, child_item_id, child_version_id, quantity, position)
@@ -687,17 +734,39 @@ func getItemVersionsByItem(db *sql.DB, itemId int) ([]BaseItemVersion, error) {
 		return []BaseItemVersion{}, err
 	}
 
-	versions := make([]BaseItemVersion, 0, 10)
-	for rows.Next() {
-		var iv BaseItemVersion
-		err := scanItemVersion(rows, &iv)
-		if err != nil {
-			return versions, err
-		}
-		versions = append(versions, iv)
+	return scanItemVersions(rows, 10)
+}
+
+func getItemVersionsByIdList(tx *sql.Tx, versionIds []int) ([]BaseItemVersion, error) {
+	if len(versionIds) == 0 {
+		return []BaseItemVersion{}, nil
 	}
 
-	return versions, nil
+	q := `
+	select version_id, item_id, version_code, notes, status, created_at, published_at
+	from item_version v where v.version_id in (%s)
+	order by created_at desc
+	`
+	args := make([]any, 0, len(versionIds))
+	args = append(args, versionIds[0])
+	var placeholders strings.Builder
+	placeholders.WriteString("?")
+	for i := 1; i < len(versionIds); i++ {
+		placeholders.WriteString(", ?")
+		args = append(args, versionIds[i])
+	}
+	itemsSelect := fmt.Sprintf(q, placeholders.String())
+
+	itemsStmt, err := tx.Prepare(itemsSelect)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := itemsStmt.Query(args...)
+	if err != nil {
+		return nil, err
+	}
+
+	return scanItemVersions(rows, len(versionIds))
 }
 
 func getBaseItemVersion(db *sql.DB, versionId int) (BaseItemVersion, error) {
@@ -736,7 +805,7 @@ func publishVersion(db *sql.DB, versionId int) error {
 	defer tx.Rollback()
 
 	versionQuery := `
-	update item_version set status = 'published'
+	update item_version set status = 'published', published_at = datetime('now')
 	where version_id = ?
 	returning item_id
 	`
@@ -855,4 +924,90 @@ func deprecateVersion(db *sql.DB, versionId int) error {
 	}
 
 	return tx.Commit()
+}
+
+func validateAssemblyChildren(tx *sql.Tx, children []CreateAssemblyChildParams, parentId int) error {
+	if len(children) == 0 {
+		return errors.New("there must be at least one child")
+	}
+	itemIds := make([]int, 0 , len(children))
+	versionIds := make([]int, 0 , len(children))
+	for _, child := range(children) {
+		if !slices.Contains(itemIds, child.ItemId) {
+			itemIds = append(itemIds, child.ItemId)
+		}
+		if child.ItemVersionId != nil {
+			versionId := *child.ItemVersionId
+			if !slices.Contains(versionIds, versionId) {
+				versionIds = append(versionIds, versionId)
+			}
+		}
+
+		if child.ItemId == parentId {
+			return errors.New("attempted to create self referencing assembly")
+		}
+		if child.Quantity.LessThanOrEqual(decimal.NewFromInt(0)) {
+			return errors.New("assembly child must have quantity greater than zero")
+		}
+	}
+
+	items, err := getItemsByIdList(tx, itemIds)
+	if err != nil {
+		return err
+	}
+	if len(items) != len(itemIds) {
+		return errors.New("invalid child: item id does not exist")
+	}
+	itemMap := make(map[int]Item)
+	for _, it := range(items) {
+		itemMap[it.Id] = it
+	}
+
+	versions, err := getItemVersionsByIdList(tx, versionIds)
+	if err != nil {
+		return err
+	}
+	if len(versions) != len(versionIds) {
+		return errors.New("invalid child: version id does not exist")
+	}
+	versionMap := make(map[int]BaseItemVersion)
+	for _, v := range(versions) {
+		versionMap[v.Id] = v
+	}
+
+	for _, child := range(children) {
+		childItem, ok := itemMap[child.ItemId]
+		if !ok {
+			return errors.New("child error: item not found")
+		}
+
+		if childItem.Inventory.Unit == EACH && !child.Quantity.IsInteger() {
+			return errors.New("child error: item unit is each and quantity is not integer")
+		}
+
+		if childItem.Kind == COMPONENT && child.ItemVersionId != nil {
+			return errors.New("child error: child is component with version")
+		}
+		if childItem.Kind == ASSEMBLY && child.ItemVersionId == nil {
+			return errors.New("child error: assembly child without its version")
+		}
+
+		if child.ItemVersionId != nil {
+			childVersion, ok := versionMap[*child.ItemVersionId]
+			if !ok {
+				return errors.New("child error: item version not found")
+			}
+			if childVersion.ItemId == parentId {
+				return errors.New("child error: attemping to create recursive version")
+			}
+			if childVersion.Status != PUBLISHED {
+				return errors.New("child error: item version is not published")
+			}
+			if childVersion.ItemId != child.ItemId {
+				return errors.New("child error: item and version do not match")
+			}
+		}
+	}
+
+	return nil
 }
