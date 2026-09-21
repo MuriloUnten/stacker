@@ -67,15 +67,20 @@ create table if not exists tracker (
 );
 
 create table if not exists image (
-    image_id integer primary key,
-    content  blob not null
+    image_id   integer primary key,
+    mime_type  text not null,
+    size_bytes integer not null,
+    width      integer not null,
+    height     integer not null,
+    created_at text not null default (datetime('now')),
+    content    blob not null
 );
 
-create table if not exists item_reference_image (
-    item_reference_image_id integer primary key,
-    image_id integer not null references image(image_id),
-    item_id  integer not null references item(item_id),
-    position integer not null check (position >= 0)
+create table if not exists item_version_reference_image (
+    reference_image_id integer primary key,
+    image_id           integer not null references image(image_id),
+    version_id         integer not null references item_version(version_id),
+    position           integer not null check (position >= 0)
 );
 
 -- the following triggers ensure the database proper behavior of components and assemblies

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -48,6 +49,14 @@ func writeJSON(w http.ResponseWriter, status int, data any) error {
 	return json.NewEncoder(w).Encode(data)
 }
 
+func writeImage(w http.ResponseWriter, img Image, content io.ReadCloser) error {
+    w.Header().Set("Content-Type", img.MimeType)
+    w.Header().Set("Content-Length", strconv.Itoa(img.SizeBytes))
+
+	_, err := io.Copy(w, content)
+	return err
+}
+
 func NewServer(port string, store *Store) *Server {
 	s := &Server{
 		port: port,
@@ -56,6 +65,8 @@ func NewServer(port string, store *Store) *Server {
 
 	http.HandleFunc("GET /api/items", makeHandler(s.getItems))
 	http.HandleFunc("GET /api/items/{id}", makeHandler(s.getItemById))
+	http.HandleFunc("GET /api/items/{id}/thumbnail", makeHandler(s.getItemThumbnail))
+	http.HandleFunc("POST /api/items/{id}/thumbnail", makeHandler(s.uploadItemThumbnail))
 
 	http.HandleFunc("GET /api/components", makeHandler(s.getComponents))
 	http.HandleFunc("GET /api/components/{id}", makeHandler(s.getComponentById))
@@ -71,6 +82,8 @@ func NewServer(port string, store *Store) *Server {
 	http.HandleFunc("GET /api/versions/{id}/bom", makeHandler(s.getBillOfMaterials))
 	http.HandleFunc("POST /api/versions/{id}/publish", makeHandler(s.publishVersion))
 	http.HandleFunc("POST /api/versions/{id}/deprecate", makeHandler(s.deprecateVersion))
+
+	http.HandleFunc("GET /api/images/{id}", makeHandler(s.getImageById))
 
 	return s
 }
@@ -266,4 +279,48 @@ func (s *Server) deprecateVersion(w http.ResponseWriter, r *http.Request) error 
 	}
 
 	return writeJSON(w, http.StatusOK, nil)
+}
+
+func (s *Server) getItemThumbnail(w http.ResponseWriter, r *http.Request) error {
+	itemId, err := getPathId("id", r)
+	if err != nil {
+		return err
+	}
+
+	image, content, err := getItemThumbnail(s.store.db, itemId)
+	if err != nil {
+		return err
+	}
+	defer content.Close()
+
+	return writeImage(w, image, content)
+}
+
+func (s *Server) uploadItemThumbnail(w http.ResponseWriter, r *http.Request) error {
+	itemId, err := getPathId("id", r)
+	if err != nil {
+		return err
+	}
+
+	image, err := uploadItemThumbnail(s.store.db, itemId, r.Body)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, image)
+}
+
+func (s *Server) getImageById(w http.ResponseWriter, r *http.Request) error {
+	imageId, err := getPathId("id", r)
+	if err != nil {
+		return err
+	}
+
+	image, content, err := getImageById(s.store.db, imageId)
+	if err != nil {
+		return err
+	}
+	defer content.Close()
+
+	return writeImage(w, image, content)
 }

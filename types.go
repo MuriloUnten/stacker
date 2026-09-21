@@ -149,3 +149,11 @@ type CreateItemVersionParams struct {
 	Children     []CreateAssemblyChildParams `json:"children"`
 }
 
+type Image struct {
+	Id        int       `json:"id"`
+	MimeType  string    `json:"mime_type"`
+	SizeBytes int       `json:"size_bytes"`
+	Width     int       `json:"width"`
+	Height    int       `json:"height"`
+	CreatedAt time.Time `json:"created_at"`
+}

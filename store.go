@@ -1,19 +1,28 @@
 package main
 
 import (
-	"strings"
+	"bytes"
 	"database/sql"
 	"embed"
 	"errors"
 	"fmt"
+	"image"
+    _ "image/jpeg"
+    _ "image/png"
+	"io"
 	"log"
 	"slices"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/pressly/goose/v3"
 	"github.com/shopspring/decimal"
 )
+
+func parseSQLiteTimestamp(str string) (time.Time, error) {
+	return parseSQLiteTimestamp(str)
+}
 
 //go:embed db/migrations/*.sql
 var embedMigrations embed.FS
@@ -266,11 +275,11 @@ func scanItem(scanner RowScanner, item *Item) error {
 		return errors.New("inconsistent state: there is a version_id, but other fields are missing")
 	}
 
-	createdAtTime, err := time.Parse("2006-01-02 15:04:05", createdAt.String)
+	createdAtTime, err := parseSQLiteTimestamp(createdAt.String)
 	if err != nil {
 		return err
 	}
-	publishedAtTime, err := time.Parse("2006-01-02 15:04:05", publishedAt.String)
+	publishedAtTime, err := parseSQLiteTimestamp(publishedAt.String)
 	if err != nil {
 		return err
 	}
@@ -334,12 +343,12 @@ func scanItemVersion(scanner RowScanner, iv *BaseItemVersion) error {
 		return err
 	}
 
-	iv.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
+	iv.CreatedAt, err = parseSQLiteTimestamp(createdAt)
 	if err != nil {
 		return err
 	}
 	if publishedAt.Valid {
-		publishedAtTime, err := time.Parse("2006-01-02 15:04:05", publishedAt.String)
+		publishedAtTime, err := parseSQLiteTimestamp(publishedAt.String)
 		if err != nil {
 			return err
 		}
@@ -581,12 +590,12 @@ func getBom(db *sql.DB, versionId int) (AssemblyNode, error) {
 				Status:      BomStatus(status.String),
 			}
 			if createdAt.Valid {
-				if t, err := time.Parse("2006-01-02 15:04:05", createdAt.String); err == nil {
+				if t, err := parseSQLiteTimestamp(createdAt.String); err == nil {
 					bv.CreatedAt = t
 				}
 			}
 			if publishedAt.Valid {
-				if t, err := time.Parse("2006-01-02 15:04:05", publishedAt.String); err == nil {
+				if t, err := parseSQLiteTimestamp(publishedAt.String); err == nil {
 					bv.PublishedAt = &t
 				}
 			}
@@ -1010,4 +1019,137 @@ func validateAssemblyChildren(tx *sql.Tx, children []CreateAssemblyChildParams, 
 	}
 
 	return nil
+}
+
+func getItemThumbnail(db *sql.DB, itemId int) (Image, io.ReadCloser, error) {
+	var img Image
+	var content []byte
+	q := `
+	select im.image_id, im.mime_type, im.size_bytes, im.width, im.height,
+	im.created_at, im.content
+	from item it join image im on it.thumbnail_id = im.image_id
+	where it.item_id = ?
+	`
+
+	stmt, err := db.Prepare(q)
+	if err != nil {
+		return img, nil, err
+	}
+
+	row := stmt.QueryRow(itemId)
+	err = row.Scan(
+		&img.Id,
+		&img.MimeType,
+		&img.SizeBytes,
+		&img.Width,
+		&img.Height,
+		&img.CreatedAt,
+		&content,
+	)
+	if err != nil {
+		return img, nil, err
+	}
+
+	return img, io.NopCloser(bytes.NewReader(content)), nil
+}
+
+func uploadItemThumbnail(db *sql.DB, itemId int, content io.Reader) (Image, error) {
+	var img Image
+	data, err := io.ReadAll(io.LimitReader(content, 10<<20))
+
+	tx, err := db.Begin()
+	if err != nil {
+		return img, err
+	}
+	defer tx.Rollback()
+
+	img.MimeType = "image/jpeg"
+	config, _, err :=image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return img, err
+	}
+	img.Width = config.Width
+	img.Height = config.Height
+
+	q := `
+	insert into image (mime_type, size_bytes, width, height, content)
+	values (?, ?, ?, ?, ?)
+	returning image_id, created_at
+	`
+	insertStmt, err := tx.Prepare(q)
+	if err != nil {
+		return img, err
+	}
+
+	createdAtString := ""
+	row := insertStmt.QueryRow(
+		img.MimeType,
+		len(data),
+		img.Width,
+		img.Height,
+		data,
+	)
+	err = row.Scan(
+		&img.Id,
+		&createdAtString,
+	)
+	if err != nil {
+		return img, err
+	}
+	img.CreatedAt, err = parseSQLiteTimestamp(createdAtString)
+	if err != nil {
+		return img, err
+	}
+
+	itemUpdate := `update item set thumbnail_id = ? where item_id = ?`
+	updatedStmt, err := tx.Prepare(itemUpdate)
+	if err != nil {
+		return img, err
+	}
+
+	updateResult, err := updatedStmt.Exec(img.Id, itemId)
+	if err != nil {
+		return img, err
+	}
+
+	affected, err := updateResult.RowsAffected()
+	if err != nil {
+		return img, err
+	}
+	if affected != 1 {
+		return img, errors.New("image upload error: failed to update item thumbnail id")
+	}
+
+	return img, tx.Commit()
+}
+
+func getImageById(db *sql.DB, imageId int) (Image, io.ReadCloser, error) {
+	var img Image
+	var content []byte
+	q := `
+	select im.image_id, im.mime_type, im.size_bytes, im.width, im.height,
+	im.created_at, im.content
+	from image im where it.item_id = ?
+	`
+
+	stmt, err := db.Prepare(q)
+	if err != nil {
+		return img, nil, err
+	}
+
+	row := stmt.QueryRow(imageId)
+	err = row.Scan(
+		&img.Id,
+		&img.MimeType,
+		&img.SizeBytes,
+		&img.Width,
+		&img.Height,
+		&img.CreatedAt,
+		&content,
+	)
+	if err != nil {
+		return img, nil, err
+	}
+
+	return img, io.NopCloser(bytes.NewReader(content)), nil
 }
