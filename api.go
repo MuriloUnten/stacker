@@ -54,6 +54,9 @@ func NewServer(port string, store *Store) *Server {
 		store: store,
 	}
 
+	http.HandleFunc("GET /api/items", makeHandler(s.getItems))
+	http.HandleFunc("GET /api/items/{id}", makeHandler(s.getItemById))
+
 	http.HandleFunc("GET /api/components", makeHandler(s.getComponents))
 	http.HandleFunc("GET /api/components/{id}", makeHandler(s.getComponentById))
 	http.HandleFunc("POST /api/components", makeHandler(s.createComponent))
@@ -76,6 +79,28 @@ func (s *Server) Run() {
 	log.Println("Server running on", s.port)
 	err := http.ListenAndServe(s.port, nil)
 	log.Fatal(err)
+}
+
+func (s *Server) getItems(w http.ResponseWriter, r *http.Request) error {
+	items, err := getItems(s.store.db)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) getItemById(w http.ResponseWriter, r *http.Request) error {
+	id, err := getPathId("id", r)
+	if err != nil {
+		return BadRequest()
+	}
+
+	result, err := getItemById(s.store.db, id)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) getComponentById(w http.ResponseWriter, r *http.Request) error {
