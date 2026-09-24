@@ -21,7 +21,7 @@ import (
 )
 
 func parseSQLiteTimestamp(str string) (time.Time, error) {
-	return parseSQLiteTimestamp(str)
+	return time.Parse("2006-01-02 15:04:05", str)
 }
 
 //go:embed db/migrations/*.sql
