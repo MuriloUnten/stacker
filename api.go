@@ -14,6 +14,47 @@ type Server struct {
 	store *Store
 }
 
+func NewServer(port string, store *Store) *Server {
+	s := &Server{
+		port: port,
+		store: store,
+	}
+
+	s.Handle("GET /api/items", s.getItems)
+	s.Handle("GET /api/items/{id}", s.getItemById)
+	s.Handle("GET /api/items/{id}/thumbnail", s.getItemThumbnail)
+	s.Handle("POST /api/items/{id}/thumbnail", s.uploadItemThumbnail)
+
+	s.Handle("GET /api/components", s.getComponents)
+	s.Handle("GET /api/components/{id}", s.getComponentById)
+	s.Handle("POST /api/components", s.createComponent)
+
+	s.Handle("GET /api/assemblies", s.getAssemblies)
+	s.Handle("GET /api/assemblies/{id}", s.getAssemblyById)
+	s.Handle("POST /api/assemblies", s.createAssembly)
+	s.Handle("POST /api/assemblies/{id}/versions", s.createAssemblyVersion)
+	s.Handle("GET /api/assemblies/{id}/versions", s.getAssemblyVersions)
+
+	s.Handle("GET /api/versions/{id}", s.getAssemblyVersionById)
+	s.Handle("GET /api/versions/{id}/bom", s.getBillOfMaterials)
+	s.Handle("POST /api/versions/{id}/publish", s.publishVersion)
+	s.Handle("POST /api/versions/{id}/deprecate", s.deprecateVersion)
+
+	s.Handle("GET /api/images/{id}", s.getImageById)
+
+	return s
+}
+
+func (s *Server) Run() {
+	log.Println("Server running on", s.port)
+	err := http.ListenAndServe(s.port, nil)
+	log.Fatal(err)
+}
+
+func (s *Server) Handle(pattern string, handler APIFunc) {
+	http.HandleFunc(pattern, makeHandler(handler))
+}
+
 type APIFunc func(w http.ResponseWriter, r *http.Request) error
 
 func makeHandler(handler APIFunc) http.HandlerFunc {
@@ -55,43 +96,6 @@ func writeImage(w http.ResponseWriter, img Image, content io.ReadCloser) error {
 
 	_, err := io.Copy(w, content)
 	return err
-}
-
-func NewServer(port string, store *Store) *Server {
-	s := &Server{
-		port: port,
-		store: store,
-	}
-
-	http.HandleFunc("GET /api/items", makeHandler(s.getItems))
-	http.HandleFunc("GET /api/items/{id}", makeHandler(s.getItemById))
-	http.HandleFunc("GET /api/items/{id}/thumbnail", makeHandler(s.getItemThumbnail))
-	http.HandleFunc("POST /api/items/{id}/thumbnail", makeHandler(s.uploadItemThumbnail))
-
-	http.HandleFunc("GET /api/components", makeHandler(s.getComponents))
-	http.HandleFunc("GET /api/components/{id}", makeHandler(s.getComponentById))
-	http.HandleFunc("POST /api/components", makeHandler(s.createComponent))
-
-	http.HandleFunc("GET /api/assemblies", makeHandler(s.getAssemblies))
-	http.HandleFunc("GET /api/assemblies/{id}", makeHandler(s.getAssemblyById))
-	http.HandleFunc("POST /api/assemblies", makeHandler(s.createAssembly))
-	http.HandleFunc("POST /api/assemblies/{id}/versions", makeHandler(s.createAssemblyVersion))
-	http.HandleFunc("GET /api/assemblies/{id}/versions", makeHandler(s.getAssemblyVersions))
-
-	http.HandleFunc("GET /api/versions/{id}", makeHandler(s.getAssemblyVersionById))
-	http.HandleFunc("GET /api/versions/{id}/bom", makeHandler(s.getBillOfMaterials))
-	http.HandleFunc("POST /api/versions/{id}/publish", makeHandler(s.publishVersion))
-	http.HandleFunc("POST /api/versions/{id}/deprecate", makeHandler(s.deprecateVersion))
-
-	http.HandleFunc("GET /api/images/{id}", makeHandler(s.getImageById))
-
-	return s
-}
-
-func (s *Server) Run() {
-	log.Println("Server running on", s.port)
-	err := http.ListenAndServe(s.port, nil)
-	log.Fatal(err)
 }
 
 func (s *Server) getItems(w http.ResponseWriter, r *http.Request) error {
