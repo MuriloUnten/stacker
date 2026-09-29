@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 type Server struct {
@@ -59,25 +60,64 @@ type APIFunc func(w http.ResponseWriter, r *http.Request) error
 
 func makeHandler(handler APIFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("Request from %s\t%s %s\n", r.RemoteAddr, r.Method, r.URL.Path)
-
 		err := handler(w, r)
 		if err != nil {
-			if e, ok := err.(APIError); ok {
-				log.Println("API error:", e.Msg)
-				writeJSON(w, e.StatusCode, e)
+			var appError AppError
+			if e, ok := err.(AppError); ok {
+				appError = e
 			} else {
-				log.Println("error:", err)
-				writeJSON(w, http.StatusInternalServerError, "Internal Error")
+				appError = InternalError(err)
 			}
+
+			apiError := NewAPIError(appError)
+			status := httpStatusCodeFromErrorKind(apiError.Kind)
+
+			// TODO refactor out to another middleware with some proper logger.
+			nowString := time.Now().Local().Format(time.DateTime)
+			if appError.Kind == Validation {
+				log.Printf(
+					"[%s] %s\t%s %s: ERROR (%s): %s - %s\n",
+					nowString,
+					r.RemoteAddr,
+					r.Method,
+					r.URL.Path,
+					appError.Kind,
+					appError.Field,
+					appError.Error(),
+				)
+			} else {
+				log.Printf(
+					"[%s] %s\t%s %s: ERROR (%s): %s\n",
+					nowString,
+					r.RemoteAddr,
+					r.Method,
+					r.URL.Path,
+					appError.Kind,
+					appError.Error(),
+				)
+			}
+
+			writeJSON(w, status, ErrorResponse{Error: apiError})
+			return
 		}
+
+		nowString := time.Now().Local().Format(time.DateTime)
+		log.Printf(
+			"[%s] %s\t%s %s\n",
+			nowString,
+			r.RemoteAddr,
+			r.Method,
+			r.URL.Path,
+		)
 	}
 }
 
 func getPathId(wildcard string, r *http.Request) (int, error) {
 	v := r.PathValue(wildcard)
 	if v == "" {
-		return 0, errors.New("unable to get path id")
+		// TODO check if there is a better approach for this.
+		// Currently there is no good way of checking for this specific error in endpoints
+		return 0, NewAppError(Internal, errors.New("tried to extract path id with empty wildcard"))
 	}
 
 	id, err := strconv.Atoi(v)
@@ -109,7 +149,7 @@ func (s *Server) getItems(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) getItemById(w http.ResponseWriter, r *http.Request) error {
 	id, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	result, err := getItemById(s.store.db, id)
@@ -123,7 +163,7 @@ func (s *Server) getItemById(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) getComponentById(w http.ResponseWriter, r *http.Request) error {
 	id, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	result, err := getComponentById(s.store.db, id)
@@ -146,7 +186,7 @@ func (s *Server) createComponent(w http.ResponseWriter, r *http.Request) error {
 	var req CreateComponentParams
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("invalid request body"), "body")
 	}
 
 	result, err := createComponent(s.store.db, req)
@@ -160,7 +200,7 @@ func (s *Server) createComponent(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) getAssemblyById(w http.ResponseWriter, r *http.Request) error {
 	id, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	asm, err := getAssemblyById(s.store.db, id)
@@ -184,7 +224,7 @@ func (s *Server) createAssembly(w http.ResponseWriter, r *http.Request) error {
 	var req CreateAssemblyParams
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("invalid request body"), "body")
 	}
 
 	result, err := createAssembly(s.store.db, req)
@@ -198,13 +238,13 @@ func (s *Server) createAssembly(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) createAssemblyVersion(w http.ResponseWriter, r *http.Request) error {
 	itemId, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	var req CreateItemVersionParams
 	err = json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("invalid request body"), "body")
 	}
 
 	itemVersion, err := createItemVersionWrapper(s.store.db, itemId, req)
@@ -218,7 +258,7 @@ func (s *Server) createAssemblyVersion(w http.ResponseWriter, r *http.Request) e
 func (s *Server) getAssemblyVersionById(w http.ResponseWriter, r *http.Request) error {
 	versionId, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	version, err := getItemVersionById(s.store.db, versionId)
@@ -232,7 +272,7 @@ func (s *Server) getAssemblyVersionById(w http.ResponseWriter, r *http.Request) 
 func (s *Server) getAssemblyVersions(w http.ResponseWriter, r *http.Request) error {
 	itemId, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	versions, err := getItemVersionsByItem(s.store.db, itemId)
@@ -246,7 +286,7 @@ func (s *Server) getAssemblyVersions(w http.ResponseWriter, r *http.Request) err
 func (s *Server) getBillOfMaterials(w http.ResponseWriter, r *http.Request) error {
 	versionId, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	bom, err := getBom(s.store.db, versionId)
@@ -260,7 +300,7 @@ func (s *Server) getBillOfMaterials(w http.ResponseWriter, r *http.Request) erro
 func (s *Server) publishVersion(w http.ResponseWriter, r *http.Request) error {
 	versionId, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	err = publishVersion(s.store.db, versionId)
@@ -274,7 +314,7 @@ func (s *Server) publishVersion(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) deprecateVersion(w http.ResponseWriter, r *http.Request) error {
 	versionId, err := getPathId("id", r)
 	if err != nil {
-		return BadRequest()
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	err = deprecateVersion(s.store.db, versionId)
@@ -288,7 +328,7 @@ func (s *Server) deprecateVersion(w http.ResponseWriter, r *http.Request) error 
 func (s *Server) getItemThumbnail(w http.ResponseWriter, r *http.Request) error {
 	itemId, err := getPathId("id", r)
 	if err != nil {
-		return err
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	image, content, err := getItemThumbnail(s.store.db, itemId)
@@ -303,7 +343,7 @@ func (s *Server) getItemThumbnail(w http.ResponseWriter, r *http.Request) error 
 func (s *Server) uploadItemThumbnail(w http.ResponseWriter, r *http.Request) error {
 	itemId, err := getPathId("id", r)
 	if err != nil {
-		return err
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	image, err := uploadItemThumbnail(s.store.db, itemId, r.Body)
@@ -317,7 +357,7 @@ func (s *Server) uploadItemThumbnail(w http.ResponseWriter, r *http.Request) err
 func (s *Server) getImageById(w http.ResponseWriter, r *http.Request) error {
 	imageId, err := getPathId("id", r)
 	if err != nil {
-		return err
+		return NewAppErrorWithField(Validation, errors.New("missing path variable"), "id")
 	}
 
 	image, content, err := getImageById(s.store.db, imageId)

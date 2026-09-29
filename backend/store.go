@@ -21,7 +21,7 @@ import (
 )
 
 func parseSQLiteTimestamp(str string) (time.Time, error) {
-	return time.Parse("2006-01-02 15:04:05", str)
+	return time.Parse(time.DateTime, str)
 }
 
 //go:embed db/migrations/*.sql
@@ -101,6 +101,9 @@ func getItemById(db *sql.DB, id int) (Item, error) {
 	row := db.QueryRow(q, id)
 	var item Item
 	err := scanItem(row, &item)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, NewAppError(NotExist, errors.New("data not found"))
+	}
 	return item, err
 }
 
@@ -134,6 +137,9 @@ func getItemByIdWithKind(db *sql.DB, id int, kind ItemKind) (Item, error) {
 	row := db.QueryRow(q, id, kind.String())
 	var item Item
 	err := scanItem(row, &item)
+	if errors.Is(err, sql.ErrNoRows) {
+		return item, NewAppError(NotExist, errors.New("data not found"))
+	}
 	return item, err
 }
 
@@ -174,10 +180,10 @@ func getItemsByIdList(tx *sql.Tx, itemIds []int) ([]Item, error) {
 }
 
 func insertBaseItem(tx *sql.Tx, kind ItemKind, params CreateBaseItemParams) (Item, error) {
-	created  := Item{}
+	created := Item{}
 
 	if params.Unit == EACH && !params.Available.IsInteger() {
-		return created, errors.New("item with kind EACH cannot have non integer available stock")
+		return created, NewAppErrorWithField(Validation, errors.New("item with kind EACH cannot have non integer available stock"), "available")
 	}
 
 	insertItem := `
@@ -444,12 +450,18 @@ func getAssemblyById(db *sql.DB, id int) (Item, error) {
 func getBom(db *sql.DB, versionId int) (AssemblyNode, error) {
 	var root AssemblyNode
 	v, err := getBaseItemVersion(db, versionId)
+	if errors.Is(err, sql.ErrNoRows) {
+		return root, NewAppError(NotExist, errors.New("root item version not found"))
+	}
 	if err != nil {
 		return root, fmt.Errorf("fetch root node: %w", err)
 	}
 	root.Version = &v
 
 	rootItem, err := getItemById(db, v.ItemId)
+	if errors.Is(err, sql.ErrNoRows) {
+		return root, NewAppError(NotExist, errors.New("root item not found"))
+	}
 	if err != nil {
 		return root, fmt.Errorf("fetch root item: %w", err)
 	}
@@ -695,6 +707,9 @@ func getItemVersionById(db *sql.DB, versionId int) (ItemVersion, error) {
 	var v ItemVersion
 	var baseItemVersion BaseItemVersion
 	baseItemVersion, err := getBaseItemVersion(db, versionId)
+	if errors.Is(err, sql.ErrNoRows) {
+		return v, NewAppError(NotExist, errors.New("data not found"))
+	}
 	if err != nil {
 		return v, err
 	}
@@ -790,6 +805,9 @@ func getBaseItemVersion(db *sql.DB, versionId int) (BaseItemVersion, error) {
 	}
 	row := stmt.QueryRow(versionId)
 	err = scanItemVersion(row, &v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return v, NewAppError(NotExist, errors.New("item version not found"))
+	}
 	if err != nil {
 		return v, err
 	}
@@ -804,7 +822,7 @@ func publishVersion(db *sql.DB, versionId int) error {
 	}
 
 	if iv.Status != DRAFT {
-		return errors.New("can't publish non draft version")
+		return NewAppError(Validation, errors.New("can't publish non draft version"))
 	}
 
 	tx, err := db.Begin()
@@ -863,7 +881,7 @@ func deprecateVersion(db *sql.DB, versionId int) error {
 	}
 
 	if iv.Status != PUBLISHED {
-		return errors.New("can't deprecate non published version")
+		return NewAppError(Validation, errors.New("can't deprecate non published version"))
 	}
 
 	tx, err := db.Begin()
@@ -937,11 +955,11 @@ func deprecateVersion(db *sql.DB, versionId int) error {
 
 func validateAssemblyChildren(tx *sql.Tx, children []CreateAssemblyChildParams, parentId int) error {
 	if len(children) == 0 {
-		return errors.New("there must be at least one child")
+		return NewAppErrorWithField(Validation, errors.New("there must be at least one child"), "children")
 	}
 	itemIds := make([]int, 0 , len(children))
 	versionIds := make([]int, 0 , len(children))
-	for _, child := range(children) {
+	for i, child := range(children) {
 		if !slices.Contains(itemIds, child.ItemId) {
 			itemIds = append(itemIds, child.ItemId)
 		}
@@ -953,10 +971,14 @@ func validateAssemblyChildren(tx *sql.Tx, children []CreateAssemblyChildParams, 
 		}
 
 		if child.ItemId == parentId {
-			return errors.New("attempted to create self referencing assembly")
+			return NewAppError(Validation, errors.New("attempted to create self referencing assembly"))
 		}
 		if child.Quantity.LessThanOrEqual(decimal.NewFromInt(0)) {
-			return errors.New("assembly child must have quantity greater than zero")
+			return NewAppErrorWithField(
+				Validation,
+				errors.New("assembly child must have quantity greater than zero"),
+				fmt.Sprintf("children[%d].quantity", i),
+			)
 		}
 	}
 
@@ -965,7 +987,7 @@ func validateAssemblyChildren(tx *sql.Tx, children []CreateAssemblyChildParams, 
 		return err
 	}
 	if len(items) != len(itemIds) {
-		return errors.New("invalid child: item id does not exist")
+		return NewAppError(Validation, errors.New("invalid child: some item id does not exist"))
 	}
 	itemMap := make(map[int]Item)
 	for _, it := range(items) {
@@ -977,43 +999,75 @@ func validateAssemblyChildren(tx *sql.Tx, children []CreateAssemblyChildParams, 
 		return err
 	}
 	if len(versions) != len(versionIds) {
-		return errors.New("invalid child: version id does not exist")
+		return NewAppError(Validation, errors.New("invalid child: version id does not exist"))
 	}
 	versionMap := make(map[int]BaseItemVersion)
 	for _, v := range(versions) {
 		versionMap[v.Id] = v
 	}
 
-	for _, child := range(children) {
+	for i, child := range(children) {
 		childItem, ok := itemMap[child.ItemId]
 		if !ok {
-			return errors.New("child error: item not found")
+			return NewAppErrorWithField(
+				Validation,
+				errors.New("child error: item not found"),
+				fmt.Sprintf("children[%d]", i),
+			)
 		}
 
 		if childItem.Inventory.Unit == EACH && !child.Quantity.IsInteger() {
-			return errors.New("child error: item unit is each and quantity is not integer")
+			return NewAppErrorWithField(
+				Validation,
+				errors.New("item unit is EACH and quantity is not integer"),
+				fmt.Sprintf("children[%d].quantity", i),
+			)
 		}
 
 		if childItem.Kind == COMPONENT && child.ItemVersionId != nil {
-			return errors.New("child error: child is component with version")
+			return NewAppErrorWithField(
+				Validation,
+				errors.New("child component cannot have version"),
+				fmt.Sprintf("children[%d].item_version_id", i),
+			)
 		}
 		if childItem.Kind == ASSEMBLY && child.ItemVersionId == nil {
-			return errors.New("child error: assembly child without its version")
+			return NewAppErrorWithField(
+				Validation,
+				errors.New("child assembly must have version"),
+				fmt.Sprintf("children[%d].item_version_id", i),
+			)
 		}
 
 		if child.ItemVersionId != nil {
 			childVersion, ok := versionMap[*child.ItemVersionId]
 			if !ok {
-				return errors.New("child error: item version not found")
+				return NewAppErrorWithField(
+					Validation,
+					errors.New("item version not found"),
+					fmt.Sprintf("children[%d].item_version_id", i),
+				)
 			}
 			if childVersion.ItemId == parentId {
-				return errors.New("child error: attemping to create recursive version")
+				return NewAppErrorWithField(
+					Validation,
+					errors.New("attemping to create recursive version"),
+					fmt.Sprintf("children[%d].item_id", i),
+				)
 			}
 			if childVersion.Status != PUBLISHED {
-				return errors.New("child error: item version is not published")
+				return NewAppErrorWithField(
+					Validation,
+					errors.New("item version is not published"),
+					fmt.Sprintf("children[%d].status", i),
+				)
 			}
 			if childVersion.ItemId != child.ItemId {
-				return errors.New("child error: item and version do not match")
+				return NewAppErrorWithField(
+					Validation,
+					errors.New("item and version do not match"),
+					fmt.Sprintf("children[%d].item_id", i),
+				)
 			}
 		}
 	}
@@ -1046,6 +1100,9 @@ func getItemThumbnail(db *sql.DB, itemId int) (Image, io.ReadCloser, error) {
 		&img.CreatedAt,
 		&content,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return img, nil, NewAppError(NotExist, errors.New("image not found"))
+	}
 	if err != nil {
 		return img, nil, err
 	}
@@ -1147,6 +1204,9 @@ func getImageById(db *sql.DB, imageId int) (Image, io.ReadCloser, error) {
 		&img.CreatedAt,
 		&content,
 	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return img, nil, NewAppError(NotExist, errors.New("image not found"))
+	}
 	if err != nil {
 		return img, nil, err
 	}

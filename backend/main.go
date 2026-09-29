@@ -20,7 +20,7 @@ import (
  * - [x] Implement recursive read of BoM tree
  * - [x] Implement migration system
  * - [ ] Implement connection pool
- * - [ ] Add better errors
+ * - [x] Add better errors
  * - [ ] think about having timestamps in more things
  * - [x] Write testing framework
  * - [/] Add Tests
