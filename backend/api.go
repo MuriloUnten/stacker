@@ -277,7 +277,7 @@ func (s *Server) deprecateVersion(w http.ResponseWriter, r *http.Request) error 
 		return BadRequest()
 	}
 
-	err = publishVersion(s.store.db, versionId)
+	err = deprecateVersion(s.store.db, versionId)
 	if err != nil {
 		return err
 	}
