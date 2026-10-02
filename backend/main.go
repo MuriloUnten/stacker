@@ -26,7 +26,7 @@ import (
  * - [/] Add Tests
  * - [x] Consider using sqlc
  * - [ ] Study and think about context and timeouts
- * - [ ] Add more fields to image table (mime_type, width, height, etc)
+ * - [x] Add more fields to image table (mime_type, width, height, etc)
  * - [ ] Add optional image input to item creation functions
  * - [ ] Think about how to implement a tracker scanner goroutine
  * - [ ] Implement manufacture orders

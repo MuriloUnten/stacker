@@ -1,0 +1,12 @@
+:root {
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  background: var(--color-canvas);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  --font-body: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: "Arial Narrow", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
