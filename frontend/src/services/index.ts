@@ -1,4 +1,19 @@
+import { ApiErrorSchema, type ApiError } from "@/models/error";
+import { z } from "zod";
+
 export const BASE_API_URL: string = import.meta.env.VITE_API_URL ?? "http://localhost:1337";
+
+export function is2xx(status: number): boolean {
+    return status >= 200 && status < 300;
+}
+
+export function is4xx(status: number): boolean {
+    return status >= 400 && status < 500;
+}
+
+export function is5xx(status: number): boolean {
+    return status >= 500 && status < 600;
+}
 
 export interface PaginationParams {
   page?: number,
@@ -20,7 +35,7 @@ const Methods = {
 
 export type HTTPMethod = (typeof Methods)[keyof typeof Methods];
 
-export type ApiResult<T> = ApiSuccess<T> | ApiError;
+export type ApiResult<T> = ApiSuccess<T> | ApiFailure;
 
 export type ApiSuccess<T> = {
   data: T;
@@ -29,10 +44,10 @@ export type ApiSuccess<T> = {
   error?: never;
 };
 
-export type ApiError = {
+export type ApiFailure = {
   success: false;
   statusCode?: number;
-  error: Error;
+  error: ApiError;
 };
 
 export type HTTPResponse = {
@@ -46,31 +61,123 @@ type RawHTTPResponse = {
   body: Blob;
 }
 
-class FetchError extends Error {
-  constructor(message?: string) {
-    super(message);
-  }
-}
-
-class JsonParseError extends Error {
-  constructor(message?: string) {
-    super(message);
-  }
-}
-
 type RequestResult = RequestSuccess | RequestError;
 type RawRequestResult = RawRequestSuccess | RequestError;
 type RawRequestSuccess = { ok: true, response: RawHTTPResponse }
 type RequestSuccess = { ok: true, response: HTTPResponse };
 // NOTE: This error refers to when something throws
 // (4xx and 5xx status codes ARE NOT RequestErrors)
-type RequestError = { ok: false, error: FetchError | JsonParseError };
+type RequestErrorKind = "fetch" | "json_parse";
+type RequestError = { ok: false, error: RequestErrorKind };
 
 type RequestOptions = {
   method?: HTTPMethod,
   headers?: Record<string, string>,
   body?: object,
   queryParams?: object,
+}
+
+export function handleRequestError(requestError: RequestError): ApiFailure {
+    switch (requestError.error) {
+    case "fetch":
+        return {
+            success: false,
+            error: {
+                kind: "front_fetch",
+                msg: "failed to fetch",
+            },
+        };
+    case "json_parse":
+        return {
+            success: false,
+            error: {
+                kind: "front_json_parse",
+                msg: "failed to parse JSON body",
+            }
+        };
+    }
+}
+
+export function handleApiError(result: RequestSuccess): ApiFailure {
+    const status = result.response.statusCode;
+    const parseResult = ApiErrorSchema.safeParse(result.response.body);
+    if (!parseResult.success) {
+        return handleSchemaParseError(parseResult.error, status);
+    }
+
+    return {
+        success: false,
+        statusCode: status,
+        error: parseResult.data,
+    };
+}
+
+export function handleSchemaParseError(error: z.ZodError, statusCode: number): ApiFailure {
+    const msg = z.prettifyError(error);
+    console.error("schema mismatch when parsing:", error.type, "\n", msg);
+    return {
+        success: false,
+        statusCode: statusCode,
+        error: {
+            kind: "front_json_parse",
+            msg: msg,
+        },
+    };
+}
+
+export async function serviceRequest<S extends z.ZodType>(
+    schema: S,
+    path: string,
+    options: RequestOptions = {},
+): Promise<ApiResult<z.output<S>>> {
+    const result = await fetchApi(path, options);
+    if (!result.ok) {
+        return handleRequestError(result);
+    }
+
+    const status = result.response.statusCode;
+    if (!is2xx(status)) {
+        return handleApiError(result);
+    }
+
+    const parseResult = schema.safeParse(result.response.body);
+    if (!parseResult.success) {
+        return {
+            success: false,
+            statusCode: status,
+            error: {
+                kind: "front_json_parse",
+                msg: z.prettifyError(parseResult.error),
+            },
+        };
+    }
+
+    return {
+        success: true,
+        statusCode: result.response.statusCode,
+        data: parseResult.data,
+    };
+}
+
+export async function serviceRequestWithoutResponseData(
+    path: string,
+    options: RequestOptions = {},
+): Promise<ApiResult<void>> {
+    const result = await fetchApi(path, options);
+    if (!result.ok) {
+        return handleRequestError(result);
+    }
+
+    const status = result.response.statusCode;
+    if (!is2xx(status)) {
+        return handleApiError(result);
+    }
+
+    return {
+        success: true,
+        statusCode: result.response.statusCode,
+        data: undefined,
+    };
 }
 
 /**
@@ -100,7 +207,7 @@ export async function safeFetch(path: string, options: RequestOptions = {}): Pro
     formattedBody = JSON.stringify(body);
   } catch(e) {
     console.error(`Error parsing HTTP request body: ${e}`);
-    return { ok: false, error: new JsonParseError() };
+    return { ok: false, error: "json_parse" };
   }
 
   // make api call
@@ -127,11 +234,11 @@ export async function safeFetch(path: string, options: RequestOptions = {}): Pro
       };
     } catch (e) {
       console.error(`Error parsing HTTP response: ${e}`);
-      return { ok: false, error: new JsonParseError() };
+      return { ok: false, error: "json_parse" };
     }
   } catch (e) {
     console.error(`Error in HTTP request: ${e}`);
-    return { ok: false, error: new FetchError() };
+    return { ok: false, error: "fetch" };
   }
 }
 
