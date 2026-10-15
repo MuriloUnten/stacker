@@ -1,0 +1,34 @@
+.bom-lines-editor {
+  margin-bottom: 0.6rem;
+}
+
+.bom-lines-editor__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.bom-lines-editor__empty {
+  font-size: 0.8rem;
+}
+
+.bom-lines-editor__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bom-lines-editor__row {
+  display: grid;
+  grid-template-columns: 1fr 90px auto;
+  gap: 0.4rem;
+}
+
+.bom-lines-editor__qty {
+  text-align: right;
+}

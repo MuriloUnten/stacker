@@ -1,0 +1,9 @@
+.version-form {
+  margin-bottom: 1.25rem;
+}
+
+.version-form__row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}

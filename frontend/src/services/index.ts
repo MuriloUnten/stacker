@@ -62,7 +62,7 @@ type RawHTTPResponse = {
 }
 
 type RequestResult = RequestSuccess | RequestError;
-type RawRequestResult = RawRequestSuccess | RequestError;
+export type RawRequestResult = RawRequestSuccess | RequestError;
 type RawRequestSuccess = { ok: true, response: RawHTTPResponse }
 type RequestSuccess = { ok: true, response: HTTPResponse };
 // NOTE: This error refers to when something throws
@@ -198,7 +198,7 @@ export async function safeFetch(path: string, options: RequestOptions = {}): Pro
   } = options;
 
   const fullPath = getFullPath(path, queryParams);
-  let formattedBody = "";
+  let formattedBody: string;
   const baseHeaders = {
     "Content-Type": "application/json",
   };
@@ -326,11 +326,17 @@ function removeLeadingSlash(str: string): string {
 }
 
 function guaranteeTrailingSlash(str: string): string {
+  // if (str.endsWith("/")) {
+  //   return str;
+  // }
+  //
+  // return str + "/";
+
   if (str.endsWith("/")) {
-    return str;
+    return str.slice(0, -1);
   }
 
-  return str + "/";
+  return str;
 }
 
 export function getOrdering(sortField?: string, sortOrder?: SortOrder): string | undefined {
@@ -339,7 +345,7 @@ export function getOrdering(sortField?: string, sortOrder?: SortOrder): string |
   return `${direction}${sortField}`;
 }
 
-function downloadFromResponse(response: RawHTTPResponse) {
+export function downloadFromResponse(response: RawHTTPResponse) {
   // Try to extract filename from header
   const contentDisposition = response.headers.get("Content-Disposition");
   let filename = "download";

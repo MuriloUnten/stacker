@@ -1,0 +1,120 @@
+.assembly__link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.assembly__summary {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.assembly__thumb {
+  display: flex;
+  flex: 0 0 120px;
+  align-items: center;
+  justify-content: center;
+  width: 120px;
+  height: 120px;
+  overflow: hidden;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.assembly__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.assembly__details {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.assembly__sku {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.assembly__description {
+  font-size: 0.9rem;
+}
+
+.assembly__inventory,
+.assembly__current {
+  font-size: 0.85rem;
+}
+
+.assembly__versions-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.assembly__section-title {
+  font-size: 1.1rem;
+}
+
+.assembly__version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assembly__version {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.assembly__version-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.assembly__version-code {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.assembly__version-notes {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.assembly__version-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.assembly__version-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.assembly__bom {
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}

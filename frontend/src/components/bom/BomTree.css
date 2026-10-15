@@ -1,0 +1,51 @@
+.bom-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bom-tree__node {
+  list-style: none;
+}
+
+.bom-tree__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.bom-tree__qty {
+  min-width: 3.5rem;
+  color: var(--accent);
+  text-align: right;
+}
+
+.bom-tree__name {
+  color: var(--text-h);
+}
+
+.bom-tree__sku {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.bom-tree__link {
+  font-size: 0.78rem;
+}
+
+.bom-tree__children {
+  margin-left: 1rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--border);
+}
+
+.bom-tree__empty {
+  font-size: 0.85rem;
+}

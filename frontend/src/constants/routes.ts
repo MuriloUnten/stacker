@@ -1,6 +1,7 @@
 export const ROUTES = {
     ROOT: "/",
     DASHBOARD: "/dashboard",
+    ASSEMBLIES: "/assemblies",
     ASSEMBLY: "/assemblies/:assemblyId",
     NOT_FOUND: "/404",
 } as const;
