@@ -60,6 +60,10 @@ type APIFunc func(w http.ResponseWriter, r *http.Request) error
 
 func makeHandler(handler APIFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
 		err := handler(w, r)
 		if err != nil {
 			var appError AppError
